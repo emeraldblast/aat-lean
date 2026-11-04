@@ -1,0 +1,194 @@
+/-!
+# Минимальная модель цепочки полномочий (тест осуществимости)
+
+Звено — это токен: кто выдал, кому выдан, на какие инструменты.
+Ограничений аргументов, времени, nonce и отзыва в этой модели нет.
+
+Цепочка хранится от корня к листу: `c[0]` — корень, `c[c.length-1]` — лист.
+
+Разделение, на котором держится смысл Т1:
+* `Permits` — что значит «звено разрешает вызов». Единственное место,
+  которое изменится, когда появятся ограничения аргументов.
+* `Narrows` — спецификация (`Prop`): «любой вызов, разрешённый ребёнку,
+  разрешён родителю». Определена через `Permits` и менять её не придётся.
+* `narrowsB` — то, что реально исполняет верификатор (`Bool`).
+Т1 связывает исполняемую функцию `verify` со спецификацией, а не саму с собой.
+-/
+
+namespace AAT
+
+abbrev Tool := String
+abbrev Key := String
+
+structure Link where
+  issuer : Key
+  holder : Key
+  tools  : List Tool
+deriving Repr, DecidableEq
+
+/-- Вызов инструмента. Аргументы появятся на шаге 4. -/
+structure Call where
+  tool : Tool
+deriving Repr, DecidableEq
+
+inductive Decision where
+  | allow
+  | deny
+deriving Repr, DecidableEq
+
+/-! ## Спецификация -/
+
+/-- Звено разрешает вызов. -/
+def Permits (l : Link) (call : Call) : Prop :=
+  call.tool ∈ l.tools
+
+/-- Любой вызов, разрешённый ребёнку, разрешён и родителю. -/
+def Narrows (parent child : Link) : Prop :=
+  ∀ call, Permits child call → Permits parent call
+
+/-- Ребёнок выдан тем, кто держал родителя. -/
+def Linked (parent child : Link) : Prop :=
+  child.issuer = parent.holder
+
+/-- Издатель корня входит в реестр доверенных корней.
+    Это ещё не Т3: Т3 требует, чтобы издатель совпадал с ключом подписи,
+    а подписей в модели пока нет. -/
+def RootTrusted (trustedRoots : List Key) (root : Link) : Prop :=
+  root.issuer ∈ trustedRoots
+
+/-! ## Исполняемый верификатор -/
+
+def narrowsB (parent child : Link) : Bool :=
+  child.tools.all (fun x => parent.tools.contains x)
+
+def linkedB (parent child : Link) : Bool :=
+  child.issuer == parent.holder
+
+/-- Проверка всех соседних пар цепочки. -/
+def checkPairs : List Link → Bool
+  | p :: c :: rest => narrowsB p c && linkedB p c && checkPairs (c :: rest)
+  | _ => true
+
+/-- Пустая цепочка отклоняется; иначе проверяются корень и все пары. -/
+def verify (trustedRoots : List Key) (chain : List Link) : Decision :=
+  match chain with
+  | [] => .deny
+  | root :: _ =>
+    if trustedRoots.contains root.issuer && checkPairs chain then .allow else .deny
+
+/-! ## Связь Bool-проверок со спецификацией -/
+
+theorem narrowsB_iff (p c : Link) : narrowsB p c = true ↔ Narrows p c := by
+  simp only [narrowsB, Narrows, Permits, List.all_eq_true, List.contains_iff_mem]
+  constructor
+  · intro h call hc; exact h _ hc
+  · intro h x hx; exact h ⟨x⟩ hx
+
+theorem linkedB_iff (p c : Link) : linkedB p c = true ↔ Linked p c := by
+  simp [linkedB, Linked]
+
+/-- `checkPairs` принимает ровно те цепочки, где каждая соседняя пара сужает
+    права и связана по ключу. -/
+theorem checkPairs_iff : ∀ (c : List Link),
+    checkPairs c = true ↔
+      ∀ i (h : i + 1 < c.length), Narrows c[i] c[i+1] ∧ Linked c[i] c[i+1]
+  | [] => by simp [checkPairs]
+  | [_] => by simp [checkPairs]
+  | p :: q :: rest => by
+    simp only [checkPairs, Bool.and_eq_true, narrowsB_iff, linkedB_iff,
+      checkPairs_iff (q :: rest)]
+    constructor
+    · rintro ⟨⟨hn, hl⟩, hrest⟩ i hi
+      cases i with
+      | zero => exact ⟨hn, hl⟩
+      | succ j => exact hrest j (by simp at hi ⊢; omega)
+    · intro h
+      refine ⟨h 0 (by simp), fun j hj => ?_⟩
+      exact h (j + 1) (by simp at hj ⊢; omega)
+
+/-- `verify` принимает ровно непустые цепочки с доверенным корнем,
+    где все пары сужают права и связаны по ключу. -/
+theorem verify_allow_iff (trustedRoots : List Key) (c : List Link) :
+    verify trustedRoots c = .allow ↔
+      ∃ h : c ≠ [], RootTrusted trustedRoots (c[0]'(by cases c <;> simp_all)) ∧
+        ∀ i (h : i + 1 < c.length), Narrows c[i] c[i+1] ∧ Linked c[i] c[i+1] := by
+  rw [← checkPairs_iff]
+  cases c with
+  | nil => simp [verify]
+  | cons root rest =>
+    simp [verify, RootTrusted]
+
+/-! ## Т1. Монотонное сужение (любая длина цепочки) -/
+
+/-- **Т1.** Если `verify` принял цепочку, права каждого звена — подмножество
+    прав его родителя. Никакого ограничения на длину `c`. -/
+theorem t1_monotone (trustedRoots : List Key) (c : List Link)
+    (hv : verify trustedRoots c = .allow)
+    (i : Nat) (hi : i + 1 < c.length) : Narrows c[i] c[i+1] := by
+  obtain ⟨_, _, h⟩ := (verify_allow_iff trustedRoots c).mp hv
+  exact (h i hi).1
+
+/-- **Т1′ (следствие).** Права любого звена принятой цепочки — подмножество
+    прав корня. -/
+theorem t1_root_bound (trustedRoots : List Key) (c : List Link)
+    (hv : verify trustedRoots c = .allow)
+    (j : Nat) (hj : j < c.length) : Narrows (c[0]'(by omega)) c[j] := by
+  induction j with
+  | zero => intro call h; exact h
+  | succ k ih =>
+    intro call h
+    exact ih (by omega) call (t1_monotone trustedRoots c hv k hj call h)
+
+/-- Издатель корня принятой цепочки — из реестра доверенных корней.
+    Заготовка места для Т3. -/
+theorem root_trusted (trustedRoots : List Key) (c : List Link)
+    (hv : verify trustedRoots c = .allow) (h0 : 0 < c.length) :
+    RootTrusted trustedRoots c[0] := by
+  obtain ⟨_, hr, _⟩ := (verify_allow_iff trustedRoots c).mp hv
+  exact hr
+
+/-- Обратное направление: верификатор не отклоняет корректные цепочки
+    (проверка не «пустая», т.е. не сводится к `deny` для всех). -/
+theorem verify_complete (trustedRoots : List Key) (c : List Link) (hne : c ≠ [])
+    (hr : RootTrusted trustedRoots (c[0]'(by cases c <;> simp_all)))
+    (h : ∀ i (h : i + 1 < c.length), Narrows c[i] c[i+1] ∧ Linked c[i] c[i+1]) :
+    verify trustedRoots c = .allow :=
+  (verify_allow_iff trustedRoots c).mpr ⟨hne, hr, h⟩
+
+/-! ## Теоремы-ловушки (проверяются ядром через `decide`) -/
+
+def roots : List Key := ["root-key"]
+def human : Link := { issuer := "root-key", holder := "agentA", tools := ["pay", "email"] }
+def aToB  : Link := { issuer := "agentA",   holder := "agentB", tools := ["pay"] }
+
+/-- Корректная цепочка из трёх звеньев принимается. -/
+example : verify roots [human, aToB, { issuer := "agentB", holder := "agentC", tools := [] }]
+    = .allow := by decide
+
+/-- Ребёнок расширил права (добавил `"deploy"`) — отклоняется. -/
+example : verify roots [human, { aToB with tools := ["pay", "deploy"] }] = .deny := by decide
+
+/-- Расширение на третьем звене, а не на первом, — тоже отклоняется. -/
+example : verify roots [human, aToB, { issuer := "agentB", holder := "agentC", tools := ["email"] }]
+    = .deny := by decide
+
+/-- Звено выдано не тем, кто держал родителя, — отклоняется. -/
+example : verify roots [human, { aToB with issuer := "mallory" }] = .deny := by decide
+
+/-- Самозваный корень — отклоняется, даже если пары в порядке. -/
+example : verify roots [{ human with issuer := "mallory-root" }, aToB] = .deny := by decide
+
+/-- Пустая цепочка отклоняется. -/
+example : verify roots [] = .deny := by decide
+
+/-- Общая ловушка: если на любом звене есть вызов, который ребёнку разрешён,
+    а родителю нет, `verify` отклоняет — при любой длине. -/
+theorem widening_rejected (trustedRoots : List Key) (c : List Link)
+    (i : Nat) (hi : i + 1 < c.length)
+    (call : Call) (hc : Permits c[i+1] call) (hp : ¬ Permits c[i] call) :
+    verify trustedRoots c = .deny := by
+  cases h : verify trustedRoots c with
+  | deny => rfl
+  | allow => exact absurd (t1_monotone trustedRoots c h i hi call hc) hp
+
+end AAT

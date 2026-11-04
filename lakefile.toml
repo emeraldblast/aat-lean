@@ -1,0 +1,5 @@
+name = "aat-lean"
+defaultTargets = ["AatLean"]
+
+[[lean_lib]]
+name = "AatLean"
