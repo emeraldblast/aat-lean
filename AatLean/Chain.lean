@@ -121,6 +121,14 @@ def verify (trustedRoots : List Key) (chain : List Link) : Decision :=
   | root :: _ =>
     if trustedRoots.contains root.issuer && checkPairs chain then .allow else .deny
 
+/-- Шаг 6b поверх шагов 1–5: вызов проверяется против **листа** принятой
+    цепочки. «Verify tool is present in leaf_aat.tools, and that …» —
+    `permitsB` листа. Сигнатура `verify` не меняется. -/
+def authorize (trustedRoots : List Key) (chain : List Link) (call : Call) : Decision :=
+  match verify trustedRoots chain, chain.getLast? with
+  | .allow, some leaf => if permitsB leaf call then .allow else .deny
+  | _, _ => .deny
+
 /-! ## Связь Bool-проверок со спецификацией -/
 
 theorem mem_of_getTool {l : Link} {t : Tool} {m : CMap} (h : l.getTool t = some m) :
@@ -246,6 +254,46 @@ theorem verify_complete (trustedRoots : List Key) (c : List Link) (hne : c ≠ [
     verify trustedRoots c = .allow :=
   (verify_allow_iff trustedRoots c).mpr ⟨hne, hr, h⟩
 
+/-! ## Т2. Покрытие действия (шаг 6b) -/
+
+/-- Соответствие шагу 6: `authorize` разрешает ровно когда цепочка принята и
+    лист допускает вызов. -/
+theorem authorize_allow_iff (trustedRoots : List Key) (c : List Link) (call : Call) :
+    authorize trustedRoots c call = .allow ↔
+      verify trustedRoots c = .allow ∧
+      ∃ h : 0 < c.length, Permits (c[c.length - 1]'(by omega)) call := by
+  unfold authorize
+  cases hv : verify trustedRoots c with
+  | deny => simp
+  | allow =>
+    have hpos := length_pos_of_allow hv
+    rw [List.getLast?_eq_getElem?, List.getElem?_eq_getElem (by omega)]
+    simp only [permits_iff, true_and]
+    split <;> simp_all
+
+/-- **Т2.** Если вызов разрешён, его допускает **каждое** звено цепочки, а не
+    только лист: проверка листа плюс Т1 по цепочке. `Permits` — вся проверка
+    6b (закрытый мир, `"*"`, обязательные аргументы, ограничения значений), так
+    что Т2 покрывает и правила ключей 4p2–4p3. Шаг 6c (`aud`) — не здесь (Т8). -/
+theorem t2_coverage (trustedRoots : List Key) (c : List Link) (call : Call)
+    (ha : authorize trustedRoots c call = .allow)
+    (j : Nat) (hj : j < c.length) : Permits c[j] call := by
+  obtain ⟨hv, hpos, hleaf⟩ := (authorize_allow_iff trustedRoots c call).mp ha
+  -- от листа к корню: звено на d позиций выше листа допускает вызов
+  have key : ∀ d (hd : d < c.length), Permits (c[c.length - 1 - d]'(by omega)) call := by
+    intro d
+    induction d with
+    | zero => intro _; simpa using hleaf
+    | succ k ih =>
+      intro hd
+      have hn := t1_monotone trustedRoots c hv (c.length - 1 - (k + 1)) (by omega)
+      have hidx : c.length - 1 - (k + 1) + 1 = c.length - 1 - k := by omega
+      simp only [hidx] at hn
+      exact hn call (ih (by omega))
+  have := key (c.length - 1 - j) (by omega)
+  have hidx : c.length - 1 - (c.length - 1 - j) = j := by omega
+  simpa only [hidx] using this
+
 /-! ## Теоремы-ловушки (проверяются ядром через `decide +kernel`) -/
 
 /-- Инструмент без ограничений аргументов: `{}`. -/
@@ -323,6 +371,34 @@ example : verify roots [{ human with tools := [payCap 100] },
 
 /-- Ребёнок снимает ограничение (пустая карта = любые аргументы) — отклоняется. -/
 example : verify roots [{ human with tools := [payCap 100] }, aToB] = .deny := by decide +kernel
+
+/-! ### Шаг 6b: вызов против листа -/
+
+def payReq (n : Rat) : Call := ⟨"pay", [("amount", .num n)]⟩
+
+/-- Вызов в пределах лимита листа — разрешён. -/
+example : authorize roots [{ human with tools := [payCap 1000] },
+    { aToB with tools := [payCap 100] }] (payReq 50) = .allow := by decide +kernel
+
+/-- Вызов в пределах лимита корня, но сверх лимита листа — отказ: проверяется
+    лист, а не корень. -/
+example : authorize roots [{ human with tools := [payCap 1000] },
+    { aToB with tools := [payCap 100] }] (payReq 500) = .deny := by decide +kernel
+
+/-- Инструмент есть у корня, но не у листа — отказ. -/
+example : authorize roots [human, aToB] ⟨"email", []⟩ = .deny := by decide +kernel
+
+/-- Обязательный аргумент опущен — отказ. -/
+example : authorize roots [{ human with tools := [payCap 1000] }] ⟨"pay", []⟩ = .deny := by
+  decide +kernel
+
+/-- Лишний аргумент при закрытой карте — отказ. -/
+example : authorize roots [{ human with tools := [payCap 1000] }]
+    ⟨"pay", [("amount", .num 1), ("memo", .str "x")]⟩ = .deny := by decide +kernel
+
+/-- Отвергнутая цепочка не спасается допустимым вызовом. -/
+example : authorize roots [{ human with tools := [payCap 100] },
+    { aToB with tools := [payCap 1000] }] (payReq 50) = .deny := by decide +kernel
 
 /-- Общая ловушка: если на любом звене есть вызов, который ребёнку разрешён,
     а родителю нет, `verify` отклоняет — при любой длине. -/

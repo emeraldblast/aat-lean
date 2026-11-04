@@ -39,6 +39,13 @@ SUITES = {
             "narrowsB accepts a shorter child": (
                 '  child.tools.all (fun (t, cm) =>\n    match parent.getTool t with\n    | some pm => narrowsMapB pm.norm cm.norm\n    | none    => false)\n',
                 '  child.tools.all (fun (t, cm) =>\n    match parent.getTool t with\n    | some pm => narrowsMapB pm.norm cm.norm\n    | none    => false) ||\n  decide (child.tools.length < parent.tools.length)\n'),
+            "authorize checks the root instead of the leaf": (
+                "match verify trustedRoots chain, chain.getLast? with",
+                "match verify trustedRoots chain, chain.head? with"),
+            "authorize ignores the call": (
+                "if permitsB leaf call then .allow else .deny", ".allow"),
+            "authorize ignores verify": (
+                "  | .allow, some leaf => if permitsB", "  | _, some leaf => if permitsB"),
             "linkedB always true": (
                 "child.issuer == parent.holder\n", "true\n"),
             "linkedB also matches parent.issuer": (
