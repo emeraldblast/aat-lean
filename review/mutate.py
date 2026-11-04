@@ -19,17 +19,8 @@ LAKE = pathlib.Path.home() / ".elan/bin/lake"
 # file -> (regions to drop as (start_marker, end_marker), mutations as name -> (old, new))
 SUITES = {
     "AatLean/Chain.lean": (
-        [("/-! ## Связь Bool-проверок", "/-! ## Теоремы-ловушки"),
-         ("/-- Общая ловушка", "end AAT")],
+        [("/-! ## Связь структурной проверки", "/-! ## Ловушки на уровне звеньев")],
         {
-            "checkPairs skips a pair": (
-                "narrowsB p c && linkedB p c && checkPairs (c :: rest)",
-                "narrowsB p c && linkedB p c && checkPairs rest"),
-            "checkPairs checks only the last pair": (
-                "  | p :: c :: rest => narrowsB p c && linkedB p c && checkPairs (c :: rest)\n",
-                "  | p :: c :: rest =>\n    match rest with\n"
-                "    | [] => narrowsB p c && linkedB p c\n"
-                "    | _  => checkPairs (c :: rest)\n"),
             "4p1: child tool missing from parent accepted": (
                 "    | none    => false)\n", "    | none    => true)\n"),
             "narrowsB ignores constraint maps": (
@@ -39,25 +30,11 @@ SUITES = {
             "narrowsB accepts a shorter child": (
                 '  child.tools.all (fun (t, cm) =>\n    match parent.getTool t with\n    | some pm => narrowsMapB pm.norm cm.norm\n    | none    => false)\n',
                 '  child.tools.all (fun (t, cm) =>\n    match parent.getTool t with\n    | some pm => narrowsMapB pm.norm cm.norm\n    | none    => false) ||\n  decide (child.tools.length < parent.tools.length)\n'),
-            "authorize checks the root instead of the leaf": (
-                "match verify trustedRoots chain, chain.getLast? with",
-                "match verify trustedRoots chain, chain.head? with"),
-            "authorize ignores duplicate argument names": (
-                "if argsNoDup call.args && permitsB leaf call", "if permitsB leaf call"),
-            "authorize ignores the call": (
-                "if argsNoDup call.args && permitsB leaf call then .allow else .deny", ".allow"),
-            "authorize ignores verify": (
-                "  | .allow, some leaf => if argsNoDup", "  | _, some leaf => if argsNoDup"),
             "linkedB always true": (
-                "child.issuer == parent.holder\n", "true\n"),
+                "  child.issuer == parent.holder\n", "  true\n"),
             "linkedB also matches parent.issuer": (
-                "child.issuer == parent.holder\n",
-                "child.issuer == parent.holder || child.issuer == parent.issuer\n"),
-            "root trust not checked": (
-                "if trustedRoots.contains root.issuer && checkPairs chain",
-                "if checkPairs chain"),
-            "empty chain allowed": (
-                "  | [] => .deny\n  | root :: _ =>", "  | [] => .allow\n  | root :: _ =>"),
+                "  child.issuer == parent.holder\n",
+                "  child.issuer == parent.holder || child.issuer == parent.issuer\n"),
         },
     ),
     "AatLean/CMap.lean": (
@@ -127,6 +104,44 @@ SUITES = {
                 "decide (b.val ≤ x)"),
         },
     ),
+    "AatLean/Verify.lean": (
+        [("/-! ## Соответствие §8 -/", "/-! ## Ловушки (ядро"),
+         ("/-- Общая ловушка", "end AAT")],
+        {
+            'allPairs skips a pair': ('f p c && allPairs f (c :: rest)', 'f p c && allPairs f rest'),
+            'empty chain allowed': ('  | [] => .deny                                         -- 1', '  | [] => .allow'),
+            '2c: jti duplicates allowed': ('if jtiNoDup chain && rootOk P anchors root && allPairs (pairOk P) chain', 'if rootOk P anchors root && allPairs (pairOk P) chain'),
+            '3b/3k: root not anchored': ('  anchors.any (fun a => a.iss == r.issuer && r.sigBy.contains a.key) &&\n  r.delDepth == 0 &&', '  true &&\n  r.delDepth == 0 &&'),
+            '3b: root signature not checked': ('  anchors.any (fun a => a.iss == r.issuer && r.sigBy.contains a.key) &&\n  r.delDepth == 0 &&', '  anchors.any (fun a => a.iss == r.issuer) &&\n  r.delDepth == 0 &&'),
+            '3k: root iss not compared': ('  anchors.any (fun a => a.iss == r.issuer && r.sigBy.contains a.key) &&\n  r.delDepth == 0 &&', '  anchors.any (fun a => r.sigBy.contains a.key) &&\n  r.delDepth == 0 &&'),
+            "3c (redundant by T7')": ('  r.delDepth == 0 &&                                    -- 3c', '  true &&                                    -- 3c'),
+            '3d': ('  r.parHash.isNone &&                                   -- 3d', '  true &&  -- 3d'),
+            '3e': ('  decide (P.now < r.exp) &&                             -- 3e', '  true &&  -- 3e'),
+            '3f': ('  decide (r.iat ≤ P.now + P.maxIatSkew) &&', '  true &&'),
+            '3g': ('  decide (r.iat < r.exp) &&                             -- 3g', '  true &&  -- 3g'),
+            '3h': ('  decide (r.exp ≤ r.iat + P.maxTokenLifetime) &&', '  true &&'),
+            '3i': ('  decide (r.delMaxDepth ≤ P.maxDelegationDepth)  ', '  true  '),
+            '4b': ('  c.sigBy.contains p.holder &&', '  true &&'),
+            '4c': ('  linkedB p c &&', '  true &&'),
+            '4d': ('  c.delDepth == p.delDepth + 1 &&', '  true &&'),
+            '4g': ('  decide (c.delMaxDepth ≤ p.delMaxDepth) &&', '  true &&'),
+            '4h': ('  decide (c.exp ≤ p.exp) &&', '  true &&'),
+            '4i': ('  decide (P.now < c.exp) &&', '  true &&'),
+            '4j': ('  decide (p.iat ≤ c.iat) &&', '  true &&'),
+            '4k': ('  decide (c.iat ≤ P.now + P.maxIatSkew) &&', '  true &&'),
+            '4l': ('  decide (c.iat < c.exp) &&', '  true &&'),
+            '4m': ('  decide (c.delDepth ≤ c.delMaxDepth) &&', '  true &&'),
+            '4p': ('  narrowsB p c &&', '  true &&'),
+            '4q': ('  c.parHash == some p.selfHash   ', '  true   '),
+            'authorize checks the root instead of the leaf': ('match verify P anchors chain, chain.getLast? with', 'match verify P anchors chain, chain.head? with'),
+            'authorize ignores the call': ('if argsNoDup call.args && permitsB leaf call then .allow else .deny', '.allow'),
+            'authorize ignores duplicate argument names': ('if argsNoDup call.args && permitsB leaf call', 'if permitsB leaf call'),
+            'authorize ignores verify': ('  | .allow, some leaf => if argsNoDup', '  | _, some leaf => if argsNoDup'),
+            '4e (redundant by T7)': ('  decide (c.delDepth ≤ p.delMaxDepth) &&                -- 4e', '  true &&                -- 4e'),
+            '4f (redundant by T7)': ('  decide (c.delDepth ≤ P.maxDelegationDepth)            -- 4f', '  true            -- 4f'),
+            'step 5 (redundant by T7)': ('  | some leaf => c.length == leaf.delDepth + 1', '  | some _ => true'),
+        },
+    ),
 }
 
 
@@ -144,6 +159,11 @@ def compiles(path: pathlib.Path) -> bool:
     r = subprocess.run([str(LAKE), "env", "lean", str(path)], cwd=ROOT,
                        capture_output=True, text=True)
     return r.returncode == 0
+
+
+# Mutations that must survive: T7 (t7_redundant) proves these steps never change a verdict.
+EXPECTED_SURVIVORS = {"4e (redundant by T7)", "4f (redundant by T7)", "step 5 (redundant by T7)",
+                      "3c (redundant by T7')"}
 
 
 def main() -> int:
@@ -165,6 +185,11 @@ def main() -> int:
                 m = tmp / "Mutant.lean"
                 m.write_text(base.replace(old, new))
                 caught = not compiles(m)
+                if name in EXPECTED_SURVIVORS:
+                    print(f"  {'UNEXPECTEDLY CAUGHT' if caught else 'survived (expected, T7)'}  {rel}: {name}")
+                    if caught:
+                        survivors.append((rel, name))
+                    continue
                 print(f"  {'caught ' if caught else 'SURVIVED'}  {rel}: {name}")
                 if not caught:
                     survivors.append((rel, name))
