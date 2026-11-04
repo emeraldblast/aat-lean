@@ -49,6 +49,32 @@ SUITES = {
                 "  | [] => .deny\n  | root :: _ =>", "  | [] => .allow\n  | root :: _ =>"),
         },
     ),
+    "AatLean/CMap.lean": (
+        [("/-! ## 3. Корректность", "/-! ## 4. Ловушки")],
+        {
+            "6b: closed world ignored": (
+                "    | none   => m.star) &&", "    | none   => true) &&"),
+            "6b: required args not checked": (
+                "    | some e => e.optional || argsHas args k\n",
+                "    | some _ => true\n"),
+            "6b: named value not checked": (
+                "    | some e => check e.c v\n", "    | some _ => true\n"),
+            "norm: empty map stays closed": (
+                "if m.named.isEmpty && !m.star then { m with star := true } else m", "m"),
+            "4p2: child may name any key": (
+                "c.named.all (fun (k, _) => (p.get k).isSome || p.star) &&", "true &&"),
+            "4p2: child may omit required key": (
+                "(c.get k).isSome || (pe.optional && !c.star)", "true"),
+            "4p2: omit optional ignores child star": (
+                "(c.get k).isSome || (pe.optional && !c.star)", "(c.get k).isSome || pe.optional"),
+            "4p2: child may add star": (
+                "(!c.star || p.star) &&", "true &&"),
+            "4p3: required may become optional": (
+                "    | some pe => pe.optional || !ce.optional\n", "    | some _ => true\n"),
+            "4p4: constraint not compared": (
+                "    | some pe => subsumes pe.c ce.c\n", "    | some _ => true\n"),
+        },
+    ),
     "AatLean/Constraint.lean": (
         [("/-! ## 3. Корректность", "/-! ## 4. Свидетель")],
         {
