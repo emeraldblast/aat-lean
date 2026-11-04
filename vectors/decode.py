@@ -37,7 +37,8 @@ MODELED_STEPS = {
     "4b", "4c", "4d", "4e", "4f", "4g", "4h", "4i", "4j", "4k", "4l", "4m",
     "3n", "4o",
     "4p1", "4p2", "4p3", "4p4", "4q",
-    "5", "6b",
+    "5", "6b", "6c",
+    "7b", "7c", "7d", "7e", "7f", "7g", "7h", "7i",
 }
 
 
@@ -235,7 +236,17 @@ def link(token, candidates):
     sig_by = sorted({thumbprint_uri(k) for k in candidates + [jwk]
                      if k.get("kty") == "OKP" and ed25519.verify(k["x"], msg, sig)})
     ph = p.get("par_hash")
+    aud = p.get("aud", None)
+    if "aud" not in p:
+        aud = None
+    elif isinstance(aud, str):
+        aud = [aud]
+    elif isinstance(aud, list) and all(isinstance(a, str) for a in aud):
+        pass
+    else:
+        aud = []  # not a string or an array of strings: step 6c denies
     return {
+        "aud": aud,
         "issuer": p["iss"],
         "holder": thumbprint_uri(jwk),
         "tools": [[t, cmap(m)] for t, m in tools.items()],
@@ -248,6 +259,31 @@ def link(token, candidates):
         "selfHash": b64u(hashlib.sha256(msg).digest()),
         "sigBy": sig_by,
     }
+
+
+def strfield(p, k):
+    x = p.get(k)
+    return x if isinstance(x, str) else ""
+
+
+def pop_of(v, candidates, args_pairs):
+    pop = v.get("pop")
+    if not pop:
+        raise OutOfScope("no PoP JWT")
+    p = loads(pop["payload_json"])
+    if not isinstance(p.get("iat"), int) or isinstance(p.get("iat"), bool):
+        raise OutOfScope("precondition: PoP iat is not a NumericDate (parsing, 7c)")
+    hta = p.get("hta")
+    hta = [[k, value(x)] for k, x in hta.items()] if isinstance(hta, dict) else None
+    aud = p["aat_aud"] if isinstance(p.get("aat_aud"), str) else ("" if "aat_aud" in p else None)
+    nonce = p["nonce"] if isinstance(p.get("nonce"), str) else ("" if "nonce" in p else None)
+    msg = pop["signing_input"].encode()
+    sig = ed25519.b64u_decode(pop["signature_b64"])
+    sig_by = sorted({thumbprint_uri(k) for k in candidates
+                     if k.get("kty") == "OKP" and ed25519.verify(k["x"], msg, sig)})
+    return {"jti": strfield(p, "jti"), "aatId": strfield(p, "aat_id"), "aatHash": strfield(p, "aat_hash"),
+            "aatTool": strfield(p, "aat_tool"), "iat": p["iat"], "hta": hta, "aatAud": aud,
+            "nonce": nonce, "sigBy": sig_by}
 
 
 def decode(suite):
@@ -273,7 +309,18 @@ def decode(suite):
                 l = link(t, cands)
                 cands = cands + [loads(t["payload_json"])["cnf"]["jwk"]]
                 chain.append(l)
+            pol = v.get("policy") or {}
+            rs = v.get("replay_state") or {}
+            endpoint = {"audience": params["audience"], "popWindow": params["pop_window"],
+                        "requireChainAud": bool(pol.get("require_chain_aud", False)),
+                        "requirePopAud": bool(pol.get("require_pop_aud", False)),
+                        "nonce": pol.get("nonce"), "trackJti": bool(pol.get("track_pop_jti", False))}
+            if "after" in rs:
+                rec["expected_state"] = rs["after"]
             rec["input"] = {
+                "endpoint": endpoint,
+                "seen": rs.get("before", []),
+                "pop": pop_of(v, cands, args),
                 "params": {"now": now, "maxIatSkew": params["max_iat_skew"],
                            "maxTokenLifetime": params["max_token_lifetime"],
                            "maxDelegationDepth": params["max_delegation_depth"],

@@ -1,7 +1,8 @@
 # Прогон Lean-модели на векторах AAT-02
 
 Набор: `vectors/upstream/aat-jws-vectors.json` (229 векторов).
-В зоне модели: **157**; совпало **157 из 157**.
+В зоне модели: **177**; совпало **177 из 177**.
+Состояние σ после вызова (PoP `jti`) сверено на 3 векторах: совпало 3.
 
 ## В зоне модели по ожидаемому шагу
 
@@ -37,6 +38,15 @@
 | DENY | 4p4 | 24 |
 | DENY | 4q | 2 |
 | DENY | 6b | 24 |
+| DENY | 6c | 4 |
+| DENY | 7b | 1 |
+| DENY | 7c | 4 |
+| DENY | 7d | 3 |
+| DENY | 7e | 1 |
+| DENY | 7f | 2 |
+| DENY | 7g | 2 |
+| DENY | 7h | 2 |
+| DENY | 7i | 1 |
 | PERMIT | — | 54 |
 
 ## Расхождения
@@ -48,26 +58,18 @@
 | Причина | Векторов |
 |---|---|
 | expected step 3a not modeled | 6 |
-| expected step 7c not modeled | 5 |
+| precondition: inadmissible number (assumption 6) | 5 |
 | expected step 4n not modeled | 5 |
-| expected step 6c not modeled | 4 |
 | expected step 7a not modeled | 4 |
-| precondition: inadmissible number (assumption 6) | 4 |
 | expected step 3m not modeled | 4 |
-| expected step 7d not modeled | 3 |
 | expected step 4a not modeled | 3 |
-| expected step 7f not modeled | 3 |
+| precondition: duplicate JSON member names in claims (assumption 7) | 3 |
 | expected step 4b2 not modeled | 3 |
 | expected step 4b5 not modeled | 3 |
-| expected step 7h not modeled | 2 |
-| expected step 7b not modeled | 2 |
-| expected step 7g not modeled | 2 |
 | expected step 3l not modeled | 2 |
 | precondition: del_max_depth is not an integer (parsing, 3b/4b) | 2 |
-| precondition: duplicate JSON member names in claims (assumption 7) | 2 |
 | expected step 4b4 not modeled | 2 |
-| expected step 7e not modeled | 1 |
-| expected step 7i not modeled | 1 |
+| precondition: PoP iat is not a NumericDate (parsing, 7c) | 1 |
 | precondition: del_depth is not an integer (parsing, 3b/4b) | 1 |
 | precondition: exp is not an integer (parsing, 3b/4b) | 1 |
 | undecodable: KeyError | 1 |

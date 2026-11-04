@@ -81,23 +81,49 @@ def link (j : Json) : Except String Link := do
     | .ok .null => pure none
     | .ok v => pure (some (← v.getStr?))
     | .error _ => pure none
-  pure { issuer := ← str j "issuer", holder := ← str j "holder", tools,
+  let aud ← match j.getObjVal? "aud" with
+    | .ok .null => pure none
+    | .ok v => pure (some (← (← v.getArr?).toList.mapM (·.getStr?)))
+    | .error _ => pure none
+  pure { issuer := ← str j "issuer", holder := ← str j "holder", tools, aud,
          jti := ← str j "jti", delDepth := ← nat j "delDepth", delMaxDepth := ← nat j "delMaxDepth",
          iat := ← int j "iat", exp := ← int j "exp", parHash, selfHash := ← str j "selfHash",
          sigBy := ← (← (← j.getObjVal? "sigBy").getArr?).toList.mapM (·.getStr?) }
 
-def runOne (j : Json) : Except String Decision := do
+def optStr (j : Json) (k : String) : Except String (Option String) :=
+  match j.getObjVal? k with
+  | .ok .null => pure none
+  | .ok v => do pure (some (← v.getStr?))
+  | .error _ => pure none
+
+def argsOf (j : Json) : Except String Args := do
+  (← j.getArr?).toList.mapM fun e => do
+    let (k, v) ← pair e
+    pure ((← k.getStr?), ← value v)
+
+def runOne (j : Json) : Except String (Decision × List String) := do
   let p ← j.getObjVal? "params"
   let P : Params := ⟨← int p "now", ← int p "maxIatSkew", ← int p "maxTokenLifetime",
                      ← nat p "maxDelegationDepth", ← nat p "maxConstraintDepth"⟩
+  let e ← j.getObjVal? "endpoint"
+  let E : Endpoint := ⟨← str e "audience", ← int e "popWindow",
+    ← (← e.getObjVal? "requireChainAud").getBool?, ← (← e.getObjVal? "requirePopAud").getBool?,
+    ← optStr e "nonce", ← (← e.getObjVal? "trackJti").getBool?⟩
   let anchors ← (← (← j.getObjVal? "anchors").getArr?).toList.mapM fun a => do
     pure ({ iss := ← str a "iss", key := ← str a "key" } : Anchor)
   let chain ← (← (← j.getObjVal? "chain").getArr?).toList.mapM link
   let call ← j.getObjVal? "call"
-  let args ← (← (← call.getObjVal? "args").getArr?).toList.mapM fun e => do
-    let (k, v) ← pair e
-    pure ((← k.getStr?), ← value v)
-  pure (authorize P anchors chain ⟨← (← call.getObjVal? "tool").getStr?, args⟩)
+  let callV : Call := ⟨← str call "tool", ← argsOf (← call.getObjVal? "args")⟩
+  let q ← j.getObjVal? "pop"
+  let hta ← match q.getObjVal? "hta" with
+    | .ok .null => pure none
+    | .ok v => pure (some (← argsOf v))
+    | .error _ => pure none
+  let pop : PoP := ⟨← str q "jti", ← str q "aatId", ← str q "aatHash", ← str q "aatTool",
+    ← int q "iat", hta, ← optStr q "aatAud", ← optStr q "nonce",
+    ← (← (← q.getObjVal? "sigBy").getArr?).toList.mapM (·.getStr?)⟩
+  let seen ← (← (← j.getObjVal? "seen").getArr?).toList.mapM (·.getStr?)
+  pure (invokeWithState P E anchors chain callV pop seen)
 
 def main (argv : List String) : IO UInt32 := do
   let path := argv.headD "vectors/out/model-input.json"
@@ -106,7 +132,8 @@ def main (argv : List String) : IO UInt32 := do
     let id := (r.getObjVal? "id" >>= (·.getStr?)).toOption.getD "?"
     if (r.getObjVal? "scope" >>= (·.getStr?)).toOption != some "in" then continue
     match r.getObjVal? "input" >>= runOne with
-    | .ok .allow => IO.println s!"{id}\tPERMIT"
-    | .ok .deny  => IO.println s!"{id}\tDENY"
-    | .error e   => IO.println s!"{id}\tERROR {e}"
+    | .ok (d, st) =>
+      let v := match d with | .allow => "PERMIT" | .deny => "DENY"
+      IO.println s!"{id}\t{v}\t{",".intercalate st.reverse}"
+    | .error e => IO.println s!"{id}\tERROR {e}\t"
   pure 0

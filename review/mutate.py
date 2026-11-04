@@ -164,6 +164,31 @@ SUITES = {
             'step 5 (redundant by T7)': ('  | some leaf => c.length == leaf.delDepth + 1', '  | some _ => true'),
         },
     ),
+    "AatLean/Invoke.lean": (
+        [("/-! ## Соответствие и теоремы -/", "/-! ## Ловушки -/")],
+        {
+            '6c: aud value not checked': ('  c.all (fun l => l.aud.all (·.contains E.audience)) &&', '  true &&'),
+            '6c: chain audience requirement ignored': ('  (!E.requireChainAud || c.any (·.aud.isSome))', '  true'),
+            '7b: PoP signature not checked': ('  pop.sigBy.contains leaf.holder &&', '  true &&'),
+            '7c: empty PoP jti allowed': ('  !pop.jti.isEmpty && !pop.aatId.isEmpty', '  !pop.aatId.isEmpty'),
+            '7c: aat_id not compared': ('  pop.aatId == leaf.jti && pop.aatHash == leaf.selfHash &&', '  pop.aatHash == leaf.selfHash &&'),
+            '7c: aat_hash not compared': ('  pop.aatId == leaf.jti && pop.aatHash == leaf.selfHash &&', '  pop.aatId == leaf.jti &&'),
+            '7d: aat_aud not compared': ('   | some a => a == E.audience\n', '   | some _ => true\n'),
+            '7d: requirement ignored': ('   | none   => !E.requirePopAud) &&', '   | none   => true) &&'),
+            '7e: tool not compared': ('  pop.aatTool == call.tool &&', '  true &&'),
+            '7f: hta not compared': ('   | some h => htaEq h call.args\n', '   | some _ => true\n'),
+            '7f: missing hta allowed': ('   | none   => false) &&\n  decide', '   | none   => true) &&\n  decide'),
+            '7f: hta only subset of args': ('  hta.length == args.length && hta.all args.contains', '  hta.all args.contains'),
+            '7g: lower window bound': ('  decide (now - E.popWindow ≤ pop.iat) && decide', '  decide'),
+            '7g: upper window bound': ('decide (pop.iat ≤ now + E.popWindow) &&', 'true &&'),
+            '7g: exclusive window': ('decide (now - E.popWindow ≤ pop.iat)', 'decide (now - E.popWindow < pop.iat)'),
+            '7h: nonce not checked': ('   | some n => pop.nonce == some n\n', '   | some _ => true\n'),
+            'invoke skips authorize': ('  match authorize P anchors chain call, chain.getLast? with\n  | .allow, some leaf => if audOk', '  match Decision.allow, chain.getLast? with\n  | .allow, some leaf => if audOk'),
+            '7i: replay not checked': ('      if seen.contains pop.jti then (.deny, seen) else (.allow, pop.jti :: seen)', '      (.allow, pop.jti :: seen)'),
+            '7i: denied call recorded': ('  | .deny  => (.deny, seen)', '  | .deny  => (.deny, pop.jti :: seen)'),
+            '7i: jti not recorded': ('else (.allow, pop.jti :: seen)', 'else (.allow, seen)'),
+        },
+    ),
 }
 
 
