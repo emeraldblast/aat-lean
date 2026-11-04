@@ -1,0 +1,42 @@
+You are an adversarial reviewer of a Lean 4 model of the chain verifier of
+IETF draft-niyikiza-oauth-attenuating-agent-tokens-02 ("AAT-02"). Do not
+praise it. Earlier rounds reviewed a tool-names-only model; this round is the
+first with argument constraints. Three files follow: Constraint.lean,
+CMap.lean, Chain.lean.
+
+What the model claims (check each):
+- `check` (Constraint.lean) is the denotation of AAT-02 §3.4 Table 2 for
+  wildcard, exact, one_of, range; `subsumes` is §4.5 Table 4 plus the range
+  rules; `subsumes_sound`: subsumes p c → (check c x → check p x).
+- `permitsArgs` (CMap.lean) is step 6b for one tool (closed world, "*",
+  required/optional); `narrowsMapB` is steps 4p2–4p4; `narrowsMapB_sound`.
+- `Permits` = full step 6b for a link; `narrowsB` = step 4p;
+  `narrowsB_sound`: narrowsB → Narrows (one direction only, by design: §4.1
+  says the structural rules are conservative).
+- T1 `t1_monotone` / `t1_core`: in an accepted chain of any length every link
+  narrows its parent (semantic `Narrows`).
+- T2 `t2_coverage`: an authorised call is permitted by every link.
+- `incompleteness_witness`: Narrows holds but verify denies (one_of under range).
+
+Known and out of scope for this round: signatures, par_hash, depth, time,
+jti, aud, PoP, typ/alg, byte-level parsing, the second constraint pass
+(not_one_of, contains, subset, all, any). Numbers are exact rationals by the
+assumption that every number is admissible and compared by JCS (§3.4).
+
+Your tasks:
+1. Compare `check` with §3.4 Table 2 and `subsumes`/`lowerTighter`/
+   `upperTighter` with §4.5 Table 4 and the range rules, line by line. Find a
+   pair the spec allows that `subsumes` rejects, or the reverse. Lean syntax.
+2. Compare `permitsArgs` with step 6b and `narrowsMapB` with 4p2–4p4. Find
+   constraint maps where the model and the spec text disagree.
+3. Are the statements of `subsumes_sound`, `narrowsMapB_sound`,
+   `narrowsB_sound`, `t1_core`, `t2_coverage` what their docstrings say? Any
+   vacuity, wrong direction, missing case?
+4. Find a plausible bug in `check`, `subsumes`, `permitsArgs`,
+   `narrowsMapB`, `narrowsB` or `authorize` that no `example ... := by decide
+   +kernel` trap would catch (assume theorems are deleted). Give the mutant
+   and the trap that catches it.
+5. Anything else an IETF OAuth WG reviewer would object to in this model.
+
+For every claim give Lean 4 code that should compile against these files, or
+say "no counterexample found". No style notes.
