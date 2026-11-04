@@ -50,21 +50,35 @@ def cmap (j : Json) : Except String CMap := do
                             optional := ← (← v.getObjVal? "optional").getBool? } : Entry))
   pure ⟨named, ← (← j.getObjVal? "star").getBool?⟩
 
+def str (j : Json) (k : String) : Except String String := do (← j.getObjVal? k).getStr?
+def int (j : Json) (k : String) : Except String Int := do (← j.getObjVal? k).getInt?
+def nat (j : Json) (k : String) : Except String Nat := do (← j.getObjVal? k).getNat?
+
 def link (j : Json) : Except String Link := do
   let tools ← (← (← j.getObjVal? "tools").getArr?).toList.mapM fun e => do
     let (t, m) ← pair e
     pure ((← t.getStr?), ← cmap m)
-  pure { issuer := ← (← j.getObjVal? "issuer").getStr?,
-         holder := ← (← j.getObjVal? "holder").getStr?, tools }
+  let parHash ← match j.getObjVal? "parHash" with
+    | .ok .null => pure none
+    | .ok v => pure (some (← v.getStr?))
+    | .error _ => pure none
+  pure { issuer := ← str j "issuer", holder := ← str j "holder", tools,
+         jti := ← str j "jti", delDepth := ← nat j "delDepth", delMaxDepth := ← nat j "delMaxDepth",
+         iat := ← int j "iat", exp := ← int j "exp", parHash, selfHash := ← str j "selfHash",
+         sigBy := ← (← (← j.getObjVal? "sigBy").getArr?).toList.mapM (·.getStr?) }
 
 def runOne (j : Json) : Except String Decision := do
-  let roots ← (← (← j.getObjVal? "roots").getArr?).toList.mapM (·.getStr?)
+  let p ← j.getObjVal? "params"
+  let P : Params := ⟨← int p "now", ← int p "maxIatSkew", ← int p "maxTokenLifetime",
+                     ← nat p "maxDelegationDepth"⟩
+  let anchors ← (← (← j.getObjVal? "anchors").getArr?).toList.mapM fun a => do
+    pure ({ iss := ← str a "iss", key := ← str a "key" } : Anchor)
   let chain ← (← (← j.getObjVal? "chain").getArr?).toList.mapM link
   let call ← j.getObjVal? "call"
   let args ← (← (← call.getObjVal? "args").getArr?).toList.mapM fun e => do
     let (k, v) ← pair e
     pure ((← k.getStr?), ← value v)
-  pure (authorize roots chain ⟨← (← call.getObjVal? "tool").getStr?, args⟩)
+  pure (authorize P anchors chain ⟨← (← call.getObjVal? "tool").getStr?, args⟩)
 
 def main (argv : List String) : IO UInt32 := do
   let path := argv.headD "vectors/out/model-input.json"

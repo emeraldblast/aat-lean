@@ -1,11 +1,15 @@
 """Decode the AAT-02 vector suite into the Lean model's input format.
 
-Signatures are not checked (assumption 1: verified upstream). For each vector
-we extract, losslessly, what the model consumes:
-  - trust anchor issuers (root check),
-  - per token: iss, holder = JWK thumbprint URI of cnf.jwk (RFC 7638 / 9278,
-    the value step 4c compares child.iss against), and the constraint maps of
-    the attenuating_agent_token entry,
+The model treats signatures and SHA-256 as ideal (assumptions 1, 5). This
+decoder computes, for each token, the set of keys under which its Ed25519
+signature actually verifies (OpenSSL), and the SHA-256 of its JWS Signing
+Input; the model consumes those. Keys are identified by their JWK thumbprint
+URI (RFC 7638 / 9278). For each vector we extract, losslessly:
+  - params (suite defaults overridden by the vector) and `now`,
+  - trust anchors as (issuer, key thumbprint),
+  - per token: iss, holder = thumbprint URI of cnf.jwk, jti, iat, exp,
+    del_depth, del_max_depth, par_hash, own signing-input hash, signing keys,
+    and the constraint maps of the attenuating_agent_token entry,
   - the invocation: tool and args.
 
 A vector is IN SCOPE when its expected verdict is decided by steps the model
@@ -19,11 +23,21 @@ Usage:
 import base64
 import hashlib
 import json
+import pathlib
 import sys
 from decimal import Decimal
 from fractions import Fraction
 
-MODELED_STEPS = {"1", "4c", "4p1", "4p2", "4p3", "4p4", "6b"}
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import ed25519  # noqa: E402
+
+MODELED_STEPS = {
+    "1", "2c",
+    "3b", "3c", "3d", "3e", "3f", "3g", "3h", "3i", "3k",
+    "4b", "4c", "4d", "4e", "4f", "4g", "4h", "4i", "4j", "4k", "4l", "4m",
+    "4p1", "4p2", "4p3", "4p4", "4q",
+    "5", "6b",
+}
 FIRST_PASS = {"wildcard", "exact", "one_of", "range"}
 
 
@@ -31,8 +45,15 @@ class OutOfScope(Exception):
     pass
 
 
+def _no_dups(pairs):
+    keys = [k for k, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise OutOfScope("precondition: duplicate JSON member names in claims (assumption 7)")
+    return dict(pairs)
+
+
 def loads(s):
-    return json.loads(s, parse_float=Decimal, parse_int=int)
+    return json.loads(s, parse_float=Decimal, parse_int=int, object_pairs_hook=_no_dups)
 
 
 def admissible(x):
@@ -137,7 +158,14 @@ def thumbprint_uri(jwk):
     return "urn:ietf:params:oauth:jwk-thumbprint:sha-256:" + b64u(hashlib.sha256(canon.encode()).digest())
 
 
-def link(token):
+def intclaim(p, k):
+    x = p[k]
+    if isinstance(x, bool) or not isinstance(x, int):
+        raise OutOfScope(f"precondition: {k} is not an integer (parsing, 3b/4b)")
+    return x
+
+
+def link(token, candidates):
     p = loads(token["payload_json"])
     entries = [e for e in p.get("authorization_details", []) if e.get("type") == "attenuating_agent_token"]
     if len(entries) != 1:
@@ -145,15 +173,32 @@ def link(token):
     tools = entries[0].get("tools")
     if not isinstance(tools, dict):
         raise OutOfScope("tools is not an object")
+    if not isinstance(p.get("jti"), str):
+        raise OutOfScope("precondition: jti missing (3j/4b1)")
+    jwk = p["cnf"]["jwk"]
+    msg = token["signing_input"].encode()
+    sig = ed25519.b64u_decode(token["signature_b64"])
+    sig_by = sorted({thumbprint_uri(k) for k in candidates + [jwk]
+                     if k.get("kty") == "OKP" and ed25519.verify(k["x"], msg, sig)})
+    ph = p.get("par_hash")
     return {
         "issuer": p["iss"],
-        "holder": thumbprint_uri(p["cnf"]["jwk"]),
+        "holder": thumbprint_uri(jwk),
         "tools": [[t, cmap(m)] for t, m in tools.items()],
+        "jti": p["jti"],
+        "delDepth": intclaim(p, "del_depth"),
+        "delMaxDepth": intclaim(p, "del_max_depth"),
+        "iat": intclaim(p, "iat"),
+        "exp": intclaim(p, "exp"),
+        "parHash": ph,
+        "selfHash": b64u(hashlib.sha256(msg).digest()),
+        "sigBy": sig_by,
     }
 
 
 def decode(suite):
-    anchors = [a["iss"] for a in suite["trust_anchors"]]
+    anchors = [{"iss": a["iss"], "key": thumbprint_uri(a["jwk"])} for a in suite["trust_anchors"]]
+    known = [k["jwk"] for k in suite["keys"].values()] + [a["jwk"] for a in suite["trust_anchors"]]
     out = []
     for v in suite["vectors"]:
         exp = v["expected"]
@@ -162,23 +207,33 @@ def decode(suite):
         try:
             if not modeled:
                 raise OutOfScope(f"expected step {exp.get('step')} not modeled")
+            params = dict(suite["params"]); params.update(v.get("params") or {})
+            now = v.get("now", params["now"])
             # keep duplicate top-level argument names: step 6b must see them
             args = json.loads(v["args_json"], parse_float=Decimal, parse_int=int,
                               object_pairs_hook=lambda kv: kv)
             args = [(k, x if not isinstance(x, list) or not x or not isinstance(x[0], tuple)
                      else dict(x)) for k, x in args]
+            chain, cands = [], list(known)
+            for t in v["chain"]:
+                l = link(t, cands)
+                cands = cands + [loads(t["payload_json"])["cnf"]["jwk"]]
+                chain.append(l)
             rec["input"] = {
-                "roots": anchors,
-                "chain": [link(t) for t in v["chain"]],
+                "params": {"now": now, "maxIatSkew": params["max_iat_skew"],
+                           "maxTokenLifetime": params["max_token_lifetime"],
+                           "maxDelegationDepth": params["max_delegation_depth"]},
+                "anchors": anchors,
+                "chain": chain,
                 "call": {"tool": v["tool"], "args": [[k, value(x)] for k, x in args]},
             }
             rec["scope"] = "in"
         except OutOfScope as e:
             rec["scope"] = "out"
             rec["reason"] = str(e)
-        except (KeyError, TypeError, ValueError) as e:
+        except (KeyError, TypeError, ValueError, AttributeError) as e:
             rec["scope"] = "out"
-            rec["reason"] = f"undecodable: {type(e).__name__}: {e}"
+            rec["reason"] = f"undecodable: {type(e).__name__}"
         out.append(rec)
     return out
 
