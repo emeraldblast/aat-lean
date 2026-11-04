@@ -42,10 +42,12 @@ SUITES = {
             "authorize checks the root instead of the leaf": (
                 "match verify trustedRoots chain, chain.getLast? with",
                 "match verify trustedRoots chain, chain.head? with"),
+            "authorize ignores duplicate argument names": (
+                "if argsNoDup call.args && permitsB leaf call", "if permitsB leaf call"),
             "authorize ignores the call": (
-                "if permitsB leaf call then .allow else .deny", ".allow"),
+                "if argsNoDup call.args && permitsB leaf call then .allow else .deny", ".allow"),
             "authorize ignores verify": (
-                "  | .allow, some leaf => if permitsB", "  | _, some leaf => if permitsB"),
+                "  | .allow, some leaf => if argsNoDup", "  | _, some leaf => if argsNoDup"),
             "linkedB always true": (
                 "child.issuer == parent.holder\n", "true\n"),
             "linkedB also matches parent.issuer": (

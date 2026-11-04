@@ -121,12 +121,18 @@ def verify (trustedRoots : List Key) (chain : List Link) : Decision :=
   | root :: _ =>
     if trustedRoots.contains root.issuer && checkPairs chain then .allow else .deny
 
+/-- Шаг 6b: «If any JSON object in args, as written in the invocation, has
+    duplicate member names, DENY» — для имён аргументов верхнего уровня. -/
+def argsNoDup (args : Args) : Bool :=
+  let ks := args.map (·.1)
+  ks.length == ks.eraseDups.length
+
 /-- Шаг 6b поверх шагов 1–5: вызов проверяется против **листа** принятой
     цепочки. «Verify tool is present in leaf_aat.tools, and that …» —
     `permitsB` листа. Сигнатура `verify` не меняется. -/
 def authorize (trustedRoots : List Key) (chain : List Link) (call : Call) : Decision :=
   match verify trustedRoots chain, chain.getLast? with
-  | .allow, some leaf => if permitsB leaf call then .allow else .deny
+  | .allow, some leaf => if argsNoDup call.args && permitsB leaf call then .allow else .deny
   | _, _ => .deny
 
 /-! ## Связь Bool-проверок со спецификацией -/
@@ -256,11 +262,11 @@ theorem verify_complete (trustedRoots : List Key) (c : List Link) (hne : c ≠ [
 
 /-! ## Т2. Покрытие действия (шаг 6b) -/
 
-/-- Соответствие шагу 6: `authorize` разрешает ровно когда цепочка принята и
-    лист допускает вызов. -/
+/-- Соответствие шагу 6b: `authorize` разрешает ровно когда цепочка принята,
+    имена аргументов не повторяются и лист допускает вызов. -/
 theorem authorize_allow_iff (trustedRoots : List Key) (c : List Link) (call : Call) :
     authorize trustedRoots c call = .allow ↔
-      verify trustedRoots c = .allow ∧
+      verify trustedRoots c = .allow ∧ argsNoDup call.args = true ∧
       ∃ h : 0 < c.length, Permits (c[c.length - 1]'(by omega)) call := by
   unfold authorize
   cases hv : verify trustedRoots c with
@@ -278,7 +284,7 @@ theorem authorize_allow_iff (trustedRoots : List Key) (c : List Link) (call : Ca
 theorem t2_coverage (trustedRoots : List Key) (c : List Link) (call : Call)
     (ha : authorize trustedRoots c call = .allow)
     (j : Nat) (hj : j < c.length) : Permits c[j] call := by
-  obtain ⟨hv, hpos, hleaf⟩ := (authorize_allow_iff trustedRoots c call).mp ha
+  obtain ⟨hv, _, hpos, hleaf⟩ := (authorize_allow_iff trustedRoots c call).mp ha
   -- от листа к корню: звено на d позиций выше листа допускает вызов
   have key : ∀ d (hd : d < c.length), Permits (c[c.length - 1 - d]'(by omega)) call := by
     intro d
@@ -391,6 +397,11 @@ example : authorize roots [human, aToB] ⟨"email", []⟩ = .deny := by decide +
 /-- Обязательный аргумент опущен — отказ. -/
 example : authorize roots [{ human with tools := [payCap 1000] }] ⟨"pay", []⟩ = .deny := by
   decide +kernel
+
+/-- Имя аргумента повторяется — отказ, даже если каждое значение допустимо
+    (вектор J.9.5). -/
+example : authorize roots [human, aToB]
+    ⟨"pay", [("amount", .num 1), ("amount", .num 2)]⟩ = .deny := by decide +kernel
 
 /-- Лишний аргумент при закрытой карте — отказ. -/
 example : authorize roots [{ human with tools := [payCap 1000] }]

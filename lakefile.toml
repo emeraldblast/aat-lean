@@ -6,3 +6,8 @@ defaultTargets = ["AatLean"]
 [[lean_lib]]
 name = "AatLean"
 globs = ["AatLean", "AatLean.+"]
+
+# Прогон модели на векторах: lake exe aat-run vectors/out/model-input.json
+[[lean_exe]]
+name = "aat-run"
+root = "Runner"
