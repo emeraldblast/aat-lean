@@ -30,13 +30,15 @@ SUITES = {
                 "  | p :: c :: rest =>\n    match rest with\n"
                 "    | [] => narrowsB p c && linkedB p c\n"
                 "    | _  => checkPairs (c :: rest)\n"),
-            "narrowsB direction flipped": (
-                "child.tools.all (fun x => parent.tools.contains x)",
-                "parent.tools.all (fun x => child.tools.contains x)"),
+            "4p1: child tool missing from parent accepted": (
+                "    | none    => false)\n", "    | none    => true)\n"),
+            "narrowsB ignores constraint maps": (
+                "    | some pm => narrowsMapB pm.norm cm.norm\n", "    | some _ => true\n"),
+            "narrowsB skips normalization": (
+                "narrowsMapB pm.norm cm.norm", "narrowsMapB pm cm"),
             "narrowsB accepts a shorter child": (
-                "child.tools.all (fun x => parent.tools.contains x)",
-                "child.tools.all (fun x => parent.tools.contains x) ||\n"
-                "    decide (child.tools.length < parent.tools.length)"),
+                '  child.tools.all (fun (t, cm) =>\n    match parent.getTool t with\n    | some pm => narrowsMapB pm.norm cm.norm\n    | none    => false)\n',
+                '  child.tools.all (fun (t, cm) =>\n    match parent.getTool t with\n    | some pm => narrowsMapB pm.norm cm.norm\n    | none    => false) ||\n  decide (child.tools.length < parent.tools.length)\n'),
             "linkedB always true": (
                 "child.issuer == parent.holder\n", "true\n"),
             "linkedB also matches parent.issuer": (
