@@ -138,14 +138,31 @@ theorem length_pos_of_allow {trustedRoots : List Key} {c : List Link}
   have := ((verify_allow_iff trustedRoots c).mp hv).1
   cases c <;> simp_all
 
+/-- Принятая цепочка прошла проверку пар. -/
+theorem checkPairs_of_allow {trustedRoots : List Key} {c : List Link}
+    (hv : verify trustedRoots c = .allow) : checkPairs c = true := by
+  cases c with
+  | nil => simp [verify] at hv
+  | cons root rest =>
+    simp only [verify] at hv
+    split at hv <;> simp_all
+
 /-! ## Т1. Монотонное сужение (любая длина цепочки) -/
 
-/-- **Т1.** Если `verify` принял цепочку, права каждого звена — подмножество
-    прав его родителя. Никакого ограничения на длину `c`. -/
+/-- **Т1, ядро.** Если проверка пар прошла, права каждого звена — подмножество
+    прав его родителя. Не зависит от параметров `verify`: при смене сигнатуры
+    `verify` (§8 AAT-02) меняется только `checkPairs_of_allow`, а не Т1. -/
+theorem t1_core (c : List Link) (h : checkPairs c = true)
+    (i : Nat) (hi : i + 1 < c.length) : Narrows c[i] c[i+1] :=
+  ((checkPairs_iff c).mp h i hi).1
+
+/-- **Т1** (утверждённая формулировка). Если `verify` принял цепочку, права
+    каждого звена — подмножество прав его родителя. Никакого ограничения на
+    длину `c`. Следствие `t1_core`. -/
 theorem t1_monotone (trustedRoots : List Key) (c : List Link)
     (hv : verify trustedRoots c = .allow)
-    (i : Nat) (hi : i + 1 < c.length) : Narrows c[i] c[i+1] := by
-  exact (((verify_allow_iff trustedRoots c).mp hv).2.2 i hi).1
+    (i : Nat) (hi : i + 1 < c.length) : Narrows c[i] c[i+1] :=
+  t1_core c (checkPairs_of_allow hv) i hi
 
 /-- **Т1′ (следствие).** Права любого звена принятой цепочки — подмножество
     прав корня. -/
