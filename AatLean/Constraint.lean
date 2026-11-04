@@ -1,8 +1,9 @@
 /-!
-# Ограничения аргументов AAT-02, первый проход
+# Ограничения аргументов AAT-02 (§3.4, §4.5)
 
-Типы: `wildcard`, `exact`, `one_of`, `range` (§3.4, таблица 2).
-Второй проход: `not_one_of`, `contains`, `subset`, `all`, `any`.
+Все девять типов ядра: `wildcard`, `exact`, `one_of`, `not_one_of`, `range`,
+`contains`, `subset`, `all`, `any`. Тип, которого точка проверки не знает, или
+плохо сформированное ограничение — `malformed` (fail-closed, §3.4).
 
 Порядок определений — правило шага 4:
 1. `check` — денотация: какие значения ограничение допускает (§3.4, таблица 2).
@@ -11,14 +12,27 @@
    разрешённых пар (родитель, ребёнок), всё остальное — `false`.
 3. `subsumes_sound` — структурное отношение корректно относительно денотации:
    то, что §4.1 утверждает без доказательства.
+4. `wf` — well-formedness (§3.4; шаги 3n и 4o) с пределом
+   `MAX_CONSTRAINT_DEPTH`.
 
 Допущение 6 (CONTEXT.md): все сравнения значений — по JCS, все числа
-допустимы (§3.4). Поэтому число — точное рациональное `Rat`, и равенство чисел
-по JCS совпадает с равенством значений. Составные значения (массивы, объекты)
-хранятся в JCS-форме; ограничения первого прохода внутрь них не смотрят.
+допустимы (§3.4). Поэтому число — точное рациональное `Rat`. Массив верхнего
+уровня — список элементов `Scalar`; вложенные массивы и объекты хранятся в
+JCS-форме (равенство строк = JCS-равенство). Объект верхнего уровня — тоже
+JCS-форма.
 -/
 
 namespace AAT
+
+/-- Элемент массива: скаляр или вложенное значение в JCS-форме. -/
+inductive Scalar where
+  | str (s : String)
+  | num (q : Rat)
+  | bool (b : Bool)
+  | null
+  /-- Вложенный массив или объект в JCS-форме. -/
+  | compound (jcs : String)
+deriving DecidableEq, Repr
 
 /-- JSON-значение аргумента или ограничения. -/
 inductive Value where
@@ -26,7 +40,9 @@ inductive Value where
   | num (q : Rat)
   | bool (b : Bool)
   | null
-  /-- Массив или объект в JCS-форме: равенство строк = JCS-равенство. -/
+  /-- Массив: `contains` и `subset` смотрят на его элементы. -/
+  | arr (xs : List Scalar)
+  /-- Объект в JCS-форме. -/
   | compound (jcs : String)
 deriving DecidableEq, Repr
 
@@ -41,9 +57,15 @@ inductive Constraint where
   | wildcard
   | exact (v : Value)
   | oneOf (vs : List Value)
+  | notOneOf (vs : List Value)
   /-- `none` — граница отсутствует (не ограничено). -/
   | range (lo hi : Option Bound)
-deriving Repr
+  | contains (req : List Scalar)
+  | subset (allowed : List Scalar)
+  | all (cs : List Constraint)
+  | any (cs : List Constraint)
+  /-- Неизвестный тип или плохо сформированное ограничение (fail-closed). -/
+  | malformed
 
 /-! ## 1. Денотация (§3.4, таблица 2) -/
 
@@ -53,6 +75,7 @@ def Bound.lowerOk (b : Bound) (x : Rat) : Bool :=
 def Bound.upperOk (b : Bound) (x : Rat) : Bool :=
   if b.incl then decide (x ≤ b.val) else decide (x < b.val)
 
+mutual
 /-- Допускает ли ограничение значение аргумента. -/
 def check : Constraint → Value → Bool
   -- «Any value is accepted.»
@@ -61,9 +84,31 @@ def check : Constraint → Value → Bool
   | .exact v, x => x == v
   -- «Argument MUST be a member of values.»
   | .oneOf vs, x => vs.contains x
+  -- «Argument MUST NOT be a member of excluded.»
+  | .notOneOf vs, x => !vs.contains x
   -- «Argument MUST be a number satisfying the specified bounds.»
   | .range lo hi, .num x => lo.all (·.lowerOk x) && hi.all (·.upperOk x)
   | .range _ _, _ => false
+  -- «Argument, which MUST be an array, MUST contain every element listed in
+  -- required.»
+  | .contains req, .arr xs => req.all xs.contains
+  | .contains _, _ => false
+  -- «Argument, which MUST be an array, MUST be a subset of allowed.»
+  | .subset al, .arr xs => xs.all al.contains
+  | .subset _, _ => false
+  -- «Logical AND of nested constraints.» / «Logical OR …»
+  | .all cs, x => checkAll cs x
+  | .any cs, x => checkAny cs x
+  | .malformed, _ => false
+
+def checkAll : List Constraint → Value → Bool
+  | [], _ => true
+  | c :: cs, x => check c x && checkAll cs x
+
+def checkAny : List Constraint → Value → Bool
+  | [], _ => false
+  | c :: cs, x => check c x || checkAny cs x
+end
 
 /-! ## 2. Структурное отношение `⊑` (§4.5, таблица 4 и правила для `range`) -/
 
@@ -84,6 +129,7 @@ def upperTighter : Option Bound → Option Bound → Bool
   | some _, none => false
   | some p, some c => decide (c.val < p.val) || (decide (c.val = p.val) && (p.incl || !c.incl))
 
+mutual
 /-- `subsumes parent child` — строка таблицы 4 разрешает пару.
     «Every other pair is invalid and MUST be rejected.» -/
 def subsumes : Constraint → Constraint → Bool
@@ -99,7 +145,29 @@ def subsumes : Constraint → Constraint → Bool
   -- exact whose value is a member of the parent's values
   | .oneOf pv, .oneOf cv => !cv.isEmpty && cv.all pv.contains
   | .oneOf pv, .exact w => pv.contains w
+  -- not_one_of: not_one_of whose excluded values are a superset of the parent's
+  | .notOneOf pv, .notOneOf cv => pv.all cv.contains
+  -- contains: contains whose required elements are a superset of the parent's
+  | .contains pr, .contains cr => pr.all cr.contains
+  -- subset: subset whose allowed elements are a subset of the parent's
+  | .subset pa, .subset ca => ca.all pa.contains
+  -- all: all in which every parent clause subsumes at least one derived clause
+  | .all ps, .all ds => coverAll ps ds
+  -- any: any in which every derived clause is subsumed by at least one parent
+  -- clause
+  | .any ps, .any ds => ds.all (fun d => coveredBy ps d)
   | _, _ => false
+
+/-- Каждое предложение родителя подчиняет хотя бы одно предложение ребёнка. -/
+def coverAll : List Constraint → List Constraint → Bool
+  | [], _ => true
+  | p :: ps, ds => ds.any (fun d => subsumes p d) && coverAll ps ds
+
+/-- Предложение ребёнка подчинено хотя бы одним предложением родителя. -/
+def coveredBy : List Constraint → Constraint → Bool
+  | [], _ => false
+  | p :: ps, d => subsumes p d || coveredBy ps d
+end
 
 /-! ## 3. Корректность: `⊑` → включение денотаций -/
 
@@ -129,16 +197,35 @@ theorem upperTighter_sound {p c : Option Bound} (h : upperTighter p c = true)
         Bool.not_eq_true'] at h
       cases hp : pb.incl <;> cases hc : cb.incl <;> simp_all <;> grind
 
-/-- **Корректность таблицы 4 (первый проход).** Если пара разрешена
-    структурно, каждое значение, которое допускает ребёнок, допускает и
-    родитель. -/
-theorem subsumes_sound (p c : Constraint) (h : subsumes p c = true)
-    (x : Value) (hx : check c x = true) : check p x = true := by
-  cases p with
-  | wildcard => rfl
-  | exact v =>
+theorem checkAll_mem : ∀ (ds : List Constraint) x, checkAll ds x = true →
+    ∀ d ∈ ds, check d x = true
+  | [], _, _, d, hd => by simp at hd
+  | e :: es, x, h, d, hd => by
+    simp only [checkAll, Bool.and_eq_true] at h
+    simp only [List.mem_cons] at hd
+    rcases hd with rfl | hd
+    · exact h.1
+    · exact checkAll_mem es x h.2 d hd
+
+theorem checkAny_exists : ∀ (ds : List Constraint) x, checkAny ds x = true →
+    ∃ d ∈ ds, check d x = true
+  | [], _, h => by simp [checkAny] at h
+  | e :: es, x, h => by
+    simp only [checkAny, Bool.or_eq_true] at h
+    rcases h with h | h
+    · exact ⟨e, by simp, h⟩
+    · obtain ⟨d, hd, hdx⟩ := checkAny_exists es x h
+      exact ⟨d, by simp [hd], hdx⟩
+
+mutual
+/-- **Корректность таблицы 4.** Если пара разрешена структурно, каждое
+    значение, которое допускает ребёнок, допускает и родитель. -/
+theorem subsumes_sound : ∀ (p c : Constraint), subsumes p c = true →
+    ∀ x, check c x = true → check p x = true
+  | .wildcard, _, _, x, _ => by simp [check]
+  | .exact v, c, h, x, hx => by
     cases c <;> simp_all [subsumes, check]
-  | oneOf pv =>
+  | .oneOf pv, c, h, x, hx => by
     cases c with
     | oneOf cv =>
       simp only [subsumes, Bool.and_eq_true, List.all_eq_true] at h
@@ -146,7 +233,19 @@ theorem subsumes_sound (p c : Constraint) (h : subsumes p c = true)
       exact List.contains_iff_mem.mp (h.2 x hx)
     | exact w => simp_all [subsumes, check]
     | _ => simp [subsumes] at h
-  | range plo phi =>
+  | .notOneOf pv, c, h, x, hx => by
+    cases c with
+    | notOneOf cv =>
+      simp only [subsumes, List.all_eq_true, List.contains_iff_mem] at h
+      simp only [check, Bool.not_eq_true'] at hx ⊢
+      cases hc : pv.contains x with
+      | false => rfl
+      | true =>
+        have hm := h x (List.contains_iff_mem.mp hc)
+        rw [List.contains_iff_mem.mpr hm] at hx
+        exact absurd hx (by decide)
+    | _ => simp [subsumes] at h
+  | .range plo phi, c, h, x, hx => by
     cases c with
     | range clo chi =>
       simp only [subsumes, Bool.and_eq_true] at h
@@ -163,17 +262,95 @@ theorem subsumes_sound (p c : Constraint) (h : subsumes p c = true)
         simpa [subsumes] using h
       | _ => simp [subsumes] at h
     | _ => simp [subsumes] at h
+  | .contains pr, c, h, x, hx => by
+    cases c with
+    | contains cr =>
+      cases x with
+      | arr xs =>
+        simp only [subsumes, List.all_eq_true, List.contains_iff_mem] at h
+        simp only [check, List.all_eq_true, List.contains_iff_mem] at hx ⊢
+        exact fun e he => hx e (h e he)
+      | _ => simp [check] at hx
+    | _ => simp [subsumes] at h
+  | .subset pa, c, h, x, hx => by
+    cases c with
+    | subset ca =>
+      cases x with
+      | arr xs =>
+        simp only [subsumes, List.all_eq_true, List.contains_iff_mem] at h
+        simp only [check, List.all_eq_true, List.contains_iff_mem] at hx ⊢
+        exact fun e he => h e (hx e he)
+      | _ => simp [check] at hx
+    | _ => simp [subsumes] at h
+  | .all ps, c, h, x, hx => by
+    cases c with
+    | all ds =>
+      simp only [subsumes] at h
+      simp only [check] at hx ⊢
+      exact coverAll_sound ps ds h x hx
+    | _ => simp [subsumes] at h
+  | .any ps, c, h, x, hx => by
+    cases c with
+    | any ds =>
+      simp only [subsumes, List.all_eq_true] at h
+      simp only [check] at hx ⊢
+      obtain ⟨d, hd, hdx⟩ := checkAny_exists ds x hx
+      exact coveredBy_sound ps d (h d hd) x hdx
+    | _ => simp [subsumes] at h
+  | .malformed, _, h, _, _ => by simp [subsumes] at h
 
-/-! ## 4. Свидетель неполноты (B1 в отчёте Давлятшина; векторы J.19.x, J.8.4)
+theorem coverAll_sound : ∀ (ps ds : List Constraint), coverAll ps ds = true →
+    ∀ x, checkAll ds x = true → checkAll ps x = true
+  | [], _, _, _, _ => by simp [checkAll]
+  | p :: ps, ds, h, x, hx => by
+    simp only [coverAll, Bool.and_eq_true, List.any_eq_true] at h
+    obtain ⟨⟨d, hd, hpd⟩, hrest⟩ := h
+    simp only [checkAll, Bool.and_eq_true]
+    exact ⟨subsumes_sound p d hpd x (checkAll_mem ds x hx d hd), coverAll_sound ps ds hrest x hx⟩
 
-`one_of` из значений внутри `range`: по смыслу это сужение, но таблица 4
-разрешает под `range` только `range` и `exact`. -/
+theorem coveredBy_sound : ∀ (ps : List Constraint) (d : Constraint), coveredBy ps d = true →
+    ∀ x, check d x = true → checkAny ps x = true
+  | [], _, h, _, _ => by simp [coveredBy] at h
+  | p :: ps, d, h, x, hx => by
+    simp only [coveredBy, Bool.or_eq_true] at h
+    simp only [checkAny, Bool.or_eq_true]
+    rcases h with h | h
+    · exact Or.inl (subsumes_sound p d h x hx)
+    · exact Or.inr (coveredBy_sound ps d h x hx)
+end
+
+/-! ## 4. Well-formedness (§3.4; шаги 3n и 4o) -/
+
+/-- Ограничение хорошо сформировано и его глубина не больше `n`
+    (`MAX_CONSTRAINT_DEPTH`): «A constraint other than all or any has depth 1;
+    an all or any has depth one more than its deepest clause.» Члены, которых
+    тип не определяет, и `optional` внутри `all`/`any` отсекает разбор
+    (`malformed`). -/
+def wf : Nat → Constraint → Bool
+  | 0, _ => false
+  | _ + 1, .wildcard => true
+  | _ + 1, .exact _ => true
+  -- «one_of.values is a non-empty array»
+  | _ + 1, .oneOf vs => !vs.isEmpty
+  | _ + 1, .notOneOf _ => true
+  -- «min is not greater than max»
+  | _ + 1, .range (some lo) (some hi) => decide (lo.val ≤ hi.val)
+  | _ + 1, .range _ _ => true
+  | _ + 1, .contains _ => true
+  | _ + 1, .subset _ => true
+  -- «no all or any constraint has an empty constraints array»
+  | n + 1, .all cs => !cs.isEmpty && cs.attach.all (fun ⟨c, _⟩ => wf n c)
+  | n + 1, .any cs => !cs.isEmpty && cs.attach.all (fun ⟨c, _⟩ => wf n c)
+  | _ + 1, .malformed => false
+
+/-! ## 5. Свидетели неполноты (B1, B2 в отчёте Давлятшина; векторы J.19.x, J.8.4)
+
+По смыслу ребёнок уже родителя, но таблица 4 пару не разрешает. -/
 
 def r0to10 : Constraint := .range (some ⟨0, true⟩) (some ⟨10, true⟩)
 def oneOf12 : Constraint := .oneOf [.num 1, .num 2]
 
-/-- По смыслу ребёнок уже родителя: каждое допустимое ребёнку значение
-    допустимо родителю. -/
+/-- `one_of` из значений внутри `range`: по смыслу сужение… -/
 theorem oneOf12_semantically_narrower :
     ∀ x, check oneOf12 x = true → check r0to10 x = true := by
   intro x hx
@@ -184,7 +361,20 @@ theorem oneOf12_semantically_narrower :
 /-- …но структурно пара отвергается. -/
 theorem oneOf12_structurally_rejected : subsumes r0to10 oneOf12 = false := rfl
 
-/-! ## 5. Ловушки (ядро, `decide +kernel`) -/
+def anyPdfCsv : Constraint := .any [.exact (.str "pdf"), .exact (.str "csv")]
+
+/-- Пример из самого §4.1: `exact` под `any` — по смыслу сужение… -/
+theorem exactPdf_semantically_narrower :
+    ∀ x, check (.exact (.str "pdf")) x = true → check anyPdfCsv x = true := by
+  intro x hx
+  simp only [check, beq_iff_eq] at hx
+  subst hx
+  decide +kernel
+
+/-- …но таблица 4 разрешает под `any` только `any` (B2, вектор J.19.1). -/
+theorem exactPdf_structurally_rejected : subsumes anyPdfCsv (.exact (.str "pdf")) = false := rfl
+
+/-! ## 6. Ловушки (ядро, `decide +kernel`) -/
 
 -- exact
 example : subsumes (.exact (.str "a")) (.exact (.str "a")) = true := by decide +kernel
@@ -200,6 +390,8 @@ example : subsumes (.oneOf [.str "a"]) (.oneOf [.str "a", .str "b"]) = false := 
 example : subsumes (.oneOf [.str "a"]) (.oneOf []) = false := by decide +kernel
 example : subsumes (.oneOf [.str "a"]) (.exact (.str "a")) = true := by decide +kernel
 example : subsumes (.oneOf [.str "a"]) (.exact (.str "c")) = false := by decide +kernel
+-- «A derived not_one_of under a parent one_of is invalid»
+example : subsumes (.oneOf [.str "a", .str "b"]) (.notOneOf [.str "c"]) = false := by decide +kernel
 -- range: сужение, равная граница, включённость
 example : subsumes r0to10 (.range (some ⟨1, true⟩) (some ⟨9, true⟩)) = true := by decide +kernel
 example : subsumes r0to10 (.range (some ⟨0, true⟩) (some ⟨10, false⟩)) = true := by decide +kernel
@@ -221,5 +413,52 @@ example : subsumes r0to10 (.exact (.str "5")) = false := by decide +kernel
 example : check r0to10 (.str "5") = false := by decide +kernel
 example : check (.exact (.num 5)) (.str "5") = false := by decide +kernel
 example : check (.range (some ⟨0, false⟩) none) (.num 0) = false := by decide +kernel
+-- not_one_of: исключённых у ребёнка не меньше
+example : subsumes (.notOneOf [.str "a"]) (.notOneOf [.str "a", .str "b"]) = true := by decide +kernel
+example : subsumes (.notOneOf [.str "a", .str "b"]) (.notOneOf [.str "a"]) = false := by decide +kernel
+example : check (.notOneOf [.str "a"]) (.str "a") = false := by decide +kernel
+example : check (.notOneOf [.str "a"]) (.str "b") = true := by decide +kernel
+-- contains: требуемых у ребёнка не меньше
+example : subsumes (.contains [.str "a"]) (.contains [.str "a", .str "b"]) = true := by decide +kernel
+example : subsumes (.contains [.str "a", .str "b"]) (.contains [.str "a"]) = false := by decide +kernel
+example : check (.contains [.str "a"]) (.arr [.str "b", .str "a"]) = true := by decide +kernel
+example : check (.contains [.str "a"]) (.arr [.str "b"]) = false := by decide +kernel
+example : check (.contains [.str "a"]) (.str "a") = false := by decide +kernel
+-- должны присутствовать все требуемые, а не хотя бы один
+example : check (.contains [.str "a", .str "b"]) (.arr [.str "a"]) = false := by decide +kernel
+-- subset: разрешённых у ребёнка не больше
+example : subsumes (.subset [.str "a", .str "b"]) (.subset [.str "a"]) = true := by decide +kernel
+example : subsumes (.subset [.str "a"]) (.subset [.str "a", .str "b"]) = false := by decide +kernel
+example : check (.subset [.str "a", .str "b"]) (.arr [.str "a"]) = true := by decide +kernel
+example : check (.subset [.str "a"]) (.arr [.str "a", .str "b"]) = false := by decide +kernel
+example : check (.subset [.str "a"]) (.str "a") = false := by decide +kernel
+-- all: каждое предложение родителя подчиняет хотя бы одно предложение ребёнка
+example : subsumes (.all [.wildcard, .wildcard]) (.all [.exact (.num 5)]) = true := by decide +kernel
+example : subsumes (.all [r0to10, .exact (.num 5)]) (.all [.exact (.num 5)]) = true := by decide +kernel
+example : subsumes (.all [r0to10, .exact (.num 5)]) (.all [r0to10]) = false := by decide +kernel
+example : check (.all [r0to10, .notOneOf [.num 3]]) (.num 3) = false := by decide +kernel
+-- any: каждое предложение ребёнка подчинено хотя бы одним предложением родителя
+example : subsumes anyPdfCsv (.any [.exact (.str "pdf")]) = true := by decide +kernel
+example : subsumes anyPdfCsv (.any [.exact (.str "pdf"), .exact (.str "docx")]) = false := by
+  decide +kernel
+example : check anyPdfCsv (.str "csv") = true := by decide +kernel
+example : check anyPdfCsv (.str "docx") = false := by decide +kernel
+-- B2: exact под any — нет (вектор J.19.1)
+example : subsumes anyPdfCsv (.exact (.str "pdf")) = false := by decide +kernel
+-- B2: all под any — нет
+example : subsumes anyPdfCsv (.all [.exact (.str "pdf")]) = false := by decide +kernel
+-- malformed: fail-closed
+example : check .malformed (.str "a") = false := by decide +kernel
+example : subsumes .wildcard .malformed = true := by decide +kernel
+example : wf 32 .malformed = false := by decide +kernel
+-- well-formedness
+example : wf 32 (.oneOf []) = false := by decide +kernel
+example : wf 32 (.range (some ⟨20, true⟩) (some ⟨5, true⟩)) = false := by decide +kernel
+example : wf 32 (.all []) = false := by decide +kernel
+example : wf 32 (.any [.all [], .wildcard]) = false := by decide +kernel
+example : wf 32 (.any [.all [.wildcard], .wildcard]) = true := by decide +kernel
+-- глубина: all глубины 3 при пределе 2 — отказ
+example : wf 2 (.all [.all [.wildcard]]) = false := by decide +kernel
+example : wf 3 (.all [.all [.wildcard]]) = true := by decide +kernel
 
 end AAT

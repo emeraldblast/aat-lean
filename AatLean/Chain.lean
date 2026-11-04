@@ -54,13 +54,11 @@ structure Link where
   selfHash    : String := ""
   /-- Ключи, под которыми подпись токена верна (допущение 1). -/
   sigBy       : List Key := []
-deriving Repr
 
 /-- Вызов инструмента с аргументами. -/
 structure Call where
   tool : Tool
   args : Args
-deriving Repr
 
 inductive Decision where
   | allow

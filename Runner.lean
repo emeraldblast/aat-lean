@@ -16,7 +16,7 @@ def rat (j : Json) : Except String Rat := do
   let d ← (← j.getObjVal? "d").getInt?
   pure ((n : Rat) / (d : Rat))
 
-def value (j : Json) : Except String Value :=
+def scalar (j : Json) : Except String Scalar :=
   match j.getObjVal? "str", j.getObjVal? "num", j.getObjVal? "bool",
         j.getObjVal? "null", j.getObjVal? "compound" with
   | .ok s, _, _, _, _ => return .str (← s.getStr?)
@@ -24,20 +24,39 @@ def value (j : Json) : Except String Value :=
   | _, _, .ok b, _, _ => return .bool (← b.getBool?)
   | _, _, _, .ok _, _ => return .null
   | _, _, _, _, .ok c => return .compound (← c.getStr?)
-  | _, _, _, _, _ => throw s!"bad value {j.compress}"
+  | _, _, _, _, _ => throw s!"bad scalar {j.compress}"
+
+def scalars (j : Json) : Except String (List Scalar) := do (← j.getArr?).toList.mapM scalar
+
+def value (j : Json) : Except String Value :=
+  match j.getObjVal? "arr" with
+  | .ok xs => return .arr (← scalars xs)
+  | .error _ => do
+    match ← scalar j with
+    | .str s => pure (.str s)
+    | .num q => pure (.num q)
+    | .bool b => pure (.bool b)
+    | .null => pure .null
+    | .compound c => pure (.compound c)
 
 def bound (j : Json) : Except String (Option Bound) :=
   match j with
   | .null => pure none
   | _ => do pure (some ⟨← rat (← j.getObjVal? "val"), ← (← j.getObjVal? "incl").getBool?⟩)
 
-def constraint (j : Json) : Except String Constraint :=
-  match j.getObjVal? "wildcard", j.getObjVal? "exact", j.getObjVal? "oneOf", j.getObjVal? "range" with
-  | .ok _, _, _, _ => pure .wildcard
-  | _, .ok v, _, _ => return .exact (← value v)
-  | _, _, .ok vs, _ => return .oneOf (← (← vs.getArr?).toList.mapM value)
-  | _, _, _, .ok r => return .range (← bound (← r.getObjVal? "lo")) (← bound (← r.getObjVal? "hi"))
-  | _, _, _, _ => throw s!"bad constraint {j.compress}"
+partial def constraint (j : Json) : Except String Constraint := do
+  if (j.getObjVal? "wildcard").isOk then return .wildcard
+  if (j.getObjVal? "malformed").isOk then return .malformed
+  if let .ok v := j.getObjVal? "exact" then return .exact (← value v)
+  if let .ok vs := j.getObjVal? "oneOf" then return .oneOf (← (← vs.getArr?).toList.mapM value)
+  if let .ok vs := j.getObjVal? "notOneOf" then return .notOneOf (← (← vs.getArr?).toList.mapM value)
+  if let .ok r := j.getObjVal? "range" then
+    return .range (← bound (← r.getObjVal? "lo")) (← bound (← r.getObjVal? "hi"))
+  if let .ok xs := j.getObjVal? "contains" then return .contains (← scalars xs)
+  if let .ok xs := j.getObjVal? "subset" then return .subset (← scalars xs)
+  if let .ok cs := j.getObjVal? "all" then return .all (← (← cs.getArr?).toList.mapM constraint)
+  if let .ok cs := j.getObjVal? "any" then return .any (← (← cs.getArr?).toList.mapM constraint)
+  throw s!"bad constraint {j.compress}"
 
 def pair (j : Json) : Except String (Json × Json) := do
   let a ← j.getArr?
@@ -70,7 +89,7 @@ def link (j : Json) : Except String Link := do
 def runOne (j : Json) : Except String Decision := do
   let p ← j.getObjVal? "params"
   let P : Params := ⟨← int p "now", ← int p "maxIatSkew", ← int p "maxTokenLifetime",
-                     ← nat p "maxDelegationDepth"⟩
+                     ← nat p "maxDelegationDepth", ← nat p "maxConstraintDepth"⟩
   let anchors ← (← (← j.getObjVal? "anchors").getArr?).toList.mapM fun a => do
     pure ({ iss := ← str a "iss", key := ← str a "key" } : Anchor)
   let chain ← (← (← j.getObjVal? "chain").getArr?).toList.mapM link

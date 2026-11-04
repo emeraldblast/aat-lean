@@ -69,7 +69,9 @@ SUITES = {
         },
     ),
     "AatLean/Constraint.lean": (
-        [("/-! ## 3. Корректность", "/-! ## 4. Свидетель")],
+        [("/-! ## 3. Корректность", "/-! ## 4. Well-formedness"),
+         ("/-- `one_of` из значений внутри `range`", "def anyPdfCsv"),
+         ("/-- Пример из самого §4.1", "/-! ## 6. Ловушки")],
         {
             "exact always matches": (
                 "  | .exact v, .exact w => w == v\n", "  | .exact _, .exact _ => true\n"),
@@ -99,6 +101,25 @@ SUITES = {
                 "| some p, some c => decide (p.val < c.val) ||"),
             "range check accepts non-numbers": (
                 "  | .range _ _, _ => false\n", "  | .range _ _, _ => true\n"),
+            'not_one_of check inverted': ('  | .notOneOf vs, x => !vs.contains x', '  | .notOneOf vs, x => vs.contains x'),
+            'not_one_of: child may exclude less': ('  | .notOneOf pv, .notOneOf cv => pv.all cv.contains', '  | .notOneOf pv, .notOneOf cv => cv.all pv.contains'),
+            'contains check: any instead of all': ('  | .contains req, .arr xs => req.all xs.contains', '  | .contains req, .arr xs => req.any xs.contains'),
+            'contains accepts non-arrays': ('  | .contains _, _ => false', '  | .contains _, _ => true'),
+            'contains: child may require less': ('  | .contains pr, .contains cr => pr.all cr.contains', '  | .contains pr, .contains cr => cr.all pr.contains'),
+            'subset check direction flipped': ('  | .subset al, .arr xs => xs.all al.contains', '  | .subset al, .arr xs => al.all xs.contains'),
+            'subset accepts non-arrays': ('  | .subset _, _ => false', '  | .subset _, _ => true'),
+            'subset: child may allow more': ('  | .subset pa, .subset ca => ca.all pa.contains', '  | .subset pa, .subset ca => pa.all ca.contains'),
+            'all check is OR': ('  | c :: cs, x => check c x && checkAll cs x', '  | c :: cs, x => check c x || checkAll cs x'),
+            'any check is AND': ('  | c :: cs, x => check c x || checkAny cs x', '  | c :: cs, x => check c x && checkAny cs x'),
+            'all cover: some parent clause suffices': ('  | p :: ps, ds => ds.any (fun d => subsumes p d) && coverAll ps ds', '  | p :: ps, ds => ds.any (fun d => subsumes p d) || coverAll ps ds'),
+            'any: some derived clause suffices': ('  | .any ps, .any ds => ds.all (fun d => coveredBy ps d)', '  | .any ps, .any ds => ds.any (fun d => coveredBy ps d)'),
+            'exact accepted under any': ('  | _, _ => false\n\n/-- Каждое предложение', '  | .any ps, .exact w => coveredBy ps (.exact w)\n  | _, _ => false\n\n/-- Каждое предложение'),
+            'malformed accepted': ('  | .malformed, _ => false\n\ndef checkAll', '  | .malformed, _ => true\n\ndef checkAll'),
+            'wf: empty one_of allowed': ('  | _ + 1, .oneOf vs => !vs.isEmpty', '  | _ + 1, .oneOf _ => true'),
+            'wf: min > max allowed': ('  | _ + 1, .range (some lo) (some hi) => decide (lo.val ≤ hi.val)', '  | _ + 1, .range (some _) (some _) => true'),
+            'wf: empty all allowed': ('  | n + 1, .all cs => !cs.isEmpty && cs.attach.all', '  | n + 1, .all cs => cs.attach.all'),
+            'wf: depth not counted': ('  | n + 1, .all cs => !cs.isEmpty && cs.attach.all (fun ⟨c, _⟩ => wf n c)', '  | n + 1, .all cs => !cs.isEmpty && cs.attach.all (fun ⟨c, _⟩ => wf (n + 1) c)'),
+            'wf: malformed allowed': ('  | _ + 1, .malformed => false', '  | _ + 1, .malformed => true'),
             "exclusive lower bound treated as inclusive": (
                 "if b.incl then decide (b.val ≤ x) else decide (b.val < x)",
                 "decide (b.val ≤ x)"),
@@ -110,7 +131,8 @@ SUITES = {
         {
             'allPairs skips a pair': ('f p c && allPairs f (c :: rest)', 'f p c && allPairs f rest'),
             'empty chain allowed': ('  | [] => .deny                                         -- 1', '  | [] => .allow'),
-            '2c: jti duplicates allowed': ('if jtiNoDup chain && rootOk P anchors root && allPairs (pairOk P) chain', 'if rootOk P anchors root && allPairs (pairOk P) chain'),
+            '3n/4o: well-formedness not checked': ('    if allWF P chain && jtiNoDup chain && rootOk P anchors root && allPairs (pairOk P) chain &&', '    if jtiNoDup chain && rootOk P anchors root && allPairs (pairOk P) chain &&'),
+    '2c: jti duplicates allowed': ('    if allWF P chain && jtiNoDup chain && rootOk P anchors root && allPairs (pairOk P) chain &&', '    if allWF P chain && rootOk P anchors root && allPairs (pairOk P) chain &&'),
             '3b/3k: root not anchored': ('  anchors.any (fun a => a.iss == r.issuer && r.sigBy.contains a.key) &&\n  r.delDepth == 0 &&', '  true &&\n  r.delDepth == 0 &&'),
             '3b: root signature not checked': ('  anchors.any (fun a => a.iss == r.issuer && r.sigBy.contains a.key) &&\n  r.delDepth == 0 &&', '  anchors.any (fun a => a.iss == r.issuer) &&\n  r.delDepth == 0 &&'),
             '3k: root iss not compared': ('  anchors.any (fun a => a.iss == r.issuer && r.sigBy.contains a.key) &&\n  r.delDepth == 0 &&', '  anchors.any (fun a => r.sigBy.contains a.key) &&\n  r.delDepth == 0 &&'),

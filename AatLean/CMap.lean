@@ -23,14 +23,12 @@ abbrev ArgName := String
 structure Entry where
   c        : Constraint
   optional : Bool := false
-deriving Repr
 
 /-- Карта ограничений одного инструмента. -/
 structure CMap where
   named : List (ArgName × Entry)
   /-- Есть ли запись `"*": {"constraint_type": "wildcard"}`. -/
   star  : Bool
-deriving Repr
 
 def CMap.get (m : CMap) (k : ArgName) : Option Entry :=
   (m.named.find? (·.1 == k)).map (·.2)

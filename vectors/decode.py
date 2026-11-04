@@ -35,10 +35,10 @@ MODELED_STEPS = {
     "1", "2c",
     "3b", "3c", "3d", "3e", "3f", "3g", "3h", "3i", "3k",
     "4b", "4c", "4d", "4e", "4f", "4g", "4h", "4i", "4j", "4k", "4l", "4m",
+    "3n", "4o",
     "4p1", "4p2", "4p3", "4p4", "4q",
     "5", "6b",
 }
-FIRST_PASS = {"wildcard", "exact", "one_of", "range"}
 
 
 class OutOfScope(Exception):
@@ -99,12 +99,17 @@ def jcs(x):
     raise OutOfScope(f"unknown JSON value {type(x)}")
 
 
-def value(x):
+def is_num(x):
+    return isinstance(x, (int, Decimal)) and not isinstance(x, bool)
+
+
+def scalar(x):
+    """An array element: scalar, or a nested array/object in JCS form."""
     if isinstance(x, bool):
         return {"bool": x}
     if x is None:
         return {"null": True}
-    if isinstance(x, (int, Decimal)):
+    if is_num(x):
         check_admissible(x)
         return {"num": num(x)}
     if isinstance(x, str):
@@ -113,36 +118,85 @@ def value(x):
     return {"compound": jcs(x)}
 
 
-def bound(c, side):
-    if side not in c:
-        return None
-    return {"val": num(c[side]), "incl": bool(c.get(side + "_inclusive", True))}
+def value(x):
+    if isinstance(x, list):
+        return {"arr": [scalar(e) for e in x]}
+    if isinstance(x, dict):
+        check_admissible(x)
+        return {"compound": jcs(x)}
+    return scalar(x)
 
 
-def constraint(c):
+MALFORMED = {"malformed": True}
+MEMBERS = {
+    "wildcard": set(), "exact": {"value"}, "one_of": {"values"}, "not_one_of": {"excluded"},
+    "range": {"min", "max", "min_inclusive", "max_inclusive"}, "contains": {"required"},
+    "subset": {"allowed"}, "all": {"constraints"}, "any": {"constraints"},
+}
+
+
+def constraint(c, nested=False):
+    """§3.4 well-formedness at the representation level; what the Lean `wf`
+    checks (non-empty one_of/all/any, min <= max, depth) is left to the model."""
+    if not isinstance(c, dict):
+        return MALFORMED
     t = c.get("constraint_type")
-    if t not in FIRST_PASS:
-        raise OutOfScope(f"constraint type {t}")
+    if t not in MEMBERS:
+        return MALFORMED  # unknown type: fail-closed
+    allowed = MEMBERS[t] | {"constraint_type"} | (set() if nested else {"optional"})
+    if set(c) - allowed:
+        return MALFORMED  # «no members other than ...»; optional nested in all/any
+    if "optional" in c and not isinstance(c["optional"], bool):
+        return MALFORMED
     if t == "wildcard":
         return {"wildcard": True}
     if t == "exact":
-        return {"exact": value(c["value"])}
-    if t == "one_of":
-        return {"oneOf": [value(v) for v in c["values"]]}
-    return {"range": {"lo": bound(c, "min"), "hi": bound(c, "max")}}
+        v = c.get("value", ...)
+        if not (v is None or isinstance(v, (str, bool)) or is_num(v)):
+            return MALFORMED
+        return {"exact": value(v)}
+    if t in ("one_of", "not_one_of", "contains", "subset"):
+        key = {"one_of": "values", "not_one_of": "excluded", "contains": "required", "subset": "allowed"}[t]
+        arr = c.get(key)
+        if not isinstance(arr, list):
+            return MALFORMED
+        if t in ("one_of", "not_one_of"):
+            return {{"one_of": "oneOf", "not_one_of": "notOneOf"}[t]: [value(x) for x in arr]}
+        return {t: [scalar(x) for x in arr]}
+    if t == "range":
+        out = {}
+        for side in ("min", "max"):
+            flag = side + "_inclusive"
+            if flag in c and (side not in c or not isinstance(c[flag], bool)):
+                return MALFORMED
+            if side in c:
+                if not is_num(c[side]):
+                    return MALFORMED
+                check_admissible(c[side])
+                out[side] = {"val": num(c[side]), "incl": bool(c.get(flag, True))}
+            else:
+                out[side] = None
+        return {"range": {"lo": out["min"], "hi": out["max"]}}
+    cs = c.get("constraints")
+    if not isinstance(cs, list):
+        return MALFORMED
+    return {t: [constraint(x, nested=True) for x in cs]}
 
 
 def cmap(m):
     if not isinstance(m, dict):
-        raise OutOfScope("constraint map is not an object")
+        raise OutOfScope("precondition: constraint map is not an object")
     named, star = [], False
     for k, entry in m.items():
         if k == "*":
-            if entry.get("constraint_type") != "wildcard":
-                raise OutOfScope("'*' is not a wildcard")
-            star = True
+            if isinstance(entry, dict) and set(entry) == {"constraint_type"} and \
+                    entry["constraint_type"] == "wildcard":
+                star = True
+            else:  # «a "*" entry is a wildcard constraint with no optional member»
+                named.append([k, {"c": MALFORMED, "optional": False}])
             continue
-        named.append([k, {"c": constraint(entry), "optional": bool(entry.get("optional", False))}])
+        opt = entry.get("optional", False) if isinstance(entry, dict) else False
+        named.append([k, {"c": constraint(entry), "optional": opt is True}])
     return {"named": named, "star": star}
 
 
@@ -222,7 +276,8 @@ def decode(suite):
             rec["input"] = {
                 "params": {"now": now, "maxIatSkew": params["max_iat_skew"],
                            "maxTokenLifetime": params["max_token_lifetime"],
-                           "maxDelegationDepth": params["max_delegation_depth"]},
+                           "maxDelegationDepth": params["max_delegation_depth"],
+                           "maxConstraintDepth": params["max_constraint_depth"]},
                 "anchors": anchors,
                 "chain": chain,
                 "call": {"tool": v["tool"], "args": [[k, value(x)] for k, x in args]},

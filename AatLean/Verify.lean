@@ -20,6 +20,7 @@ structure Params where
   maxIatSkew         : Int
   maxTokenLifetime   : Int
   maxDelegationDepth : Nat
+  maxConstraintDepth : Nat
 deriving Repr
 
 /-- Доверенный якорь: издатель и ключ (отпечаток), §8 Inputs. -/
@@ -72,6 +73,14 @@ def allPairs (f : Link → Link → Bool) : List Link → Bool
   | p :: c :: rest => f p c && allPairs f (c :: rest)
   | _ => true
 
+/-- Шаги 3n и 4o: каждое ограничение в каждой карте звена хорошо
+    сформировано и не глубже `MAX_CONSTRAINT_DEPTH`. -/
+def mapsWF (P : Params) (l : Link) : Bool :=
+  l.tools.all (fun (_, m) => m.named.all (fun (_, e) => wf P.maxConstraintDepth e.c))
+
+/-- Шаги 3n и 4o для всей цепочки. -/
+def allWF (P : Params) (c : List Link) : Bool := c.all (mapsWF P)
+
 /-- Шаг 2c: «if any value appears more than once in the presented chain, DENY». -/
 def jtiNoDup (c : List Link) : Bool := decide (c.map (·.jti)).Nodup
 
@@ -86,7 +95,8 @@ def verify (P : Params) (anchors : List Anchor) (chain : List Link) : Decision :
   match chain with
   | [] => .deny                                         -- 1
   | root :: _ =>
-    if jtiNoDup chain && rootOk P anchors root && allPairs (pairOk P) chain && step5 chain
+    if allWF P chain && jtiNoDup chain && rootOk P anchors root && allPairs (pairOk P) chain &&
+      step5 chain
     then .allow else .deny
 
 /-- Те же шаги без 4e, 4f и 5. -/
@@ -94,7 +104,7 @@ def verifyCore (P : Params) (anchors : List Anchor) (chain : List Link) : Decisi
   match chain with
   | [] => .deny
   | root :: _ =>
-    if jtiNoDup chain && rootOk P anchors root && allPairs (pairCore P) chain
+    if allWF P chain && jtiNoDup chain && rootOk P anchors root && allPairs (pairCore P) chain
     then .allow else .deny
 
 /-- Шаг 3 без 3c. -/
@@ -110,7 +120,8 @@ def verifyNo3c (P : Params) (anchors : List Anchor) (chain : List Link) : Decisi
   match chain with
   | [] => .deny
   | root :: _ =>
-    if jtiNoDup chain && rootOkNo3c P anchors root && allPairs (pairOk P) chain && step5 chain
+    if allWF P chain && jtiNoDup chain && rootOkNo3c P anchors root &&
+      allPairs (pairOk P) chain && step5 chain
     then .allow else .deny
 
 /-- Шаг 6b: «If any JSON object in args, as written in the invocation, has
@@ -146,7 +157,7 @@ theorem allPairs_iff (f : Link → Link → Bool) : ∀ (c : List Link),
 /-- **Соответствие алгоритму §8** (в объёме модели). Оракул для векторов. -/
 theorem verify_allow_iff (P : Params) (anchors : List Anchor) (c : List Link) :
     verify P anchors c = .allow ↔
-      c ≠ [] ∧ jtiNoDup c = true ∧
+      c ≠ [] ∧ allWF P c = true ∧ jtiNoDup c = true ∧
       (∀ h : 0 < c.length, rootOk P anchors c[0] = true) ∧
       (∀ i (h : i + 1 < c.length), pairOk P c[i] c[i+1] = true) ∧
       step5 c = true := by
@@ -166,11 +177,11 @@ theorem length_pos_of_allow (hv : verify P anchors c = .allow) : 0 < c.length :=
 
 theorem root_of_allow (hv : verify P anchors c = .allow) :
     rootOk P anchors (c[0]'(length_pos_of_allow hv)) = true :=
-  ((verify_allow_iff P anchors c).mp hv).2.2.1 _
+  ((verify_allow_iff P anchors c).mp hv).2.2.2.1 _
 
 theorem pair_of_allow (hv : verify P anchors c = .allow) (i : Nat) (hi : i + 1 < c.length) :
     pairOk P c[i] c[i+1] = true :=
-  ((verify_allow_iff P anchors c).mp hv).2.2.2.1 i hi
+  ((verify_allow_iff P anchors c).mp hv).2.2.2.2.1 i hi
 
 theorem core_of_allow (hv : verify P anchors c = .allow) (i : Nat) (hi : i + 1 < c.length) :
     pairCore P c[i] c[i+1] = true := by
@@ -291,7 +302,7 @@ theorem i5_bound (hv : verify P anchors c = .allow) (i : Nat) (hi : i + 1 < c.le
 /-- **2c.** В принятой цепочке нет повторов `jti` (повторного экземпляра
     токена). -/
 theorem jti_nodup (hv : verify P anchors c = .allow) : (c.map (·.jti)).Nodup := by
-  have := ((verify_allow_iff P anchors c).mp hv).2.1
+  have := ((verify_allow_iff P anchors c).mp hv).2.2.1
   simpa [jtiNoDup] using this
 
 /-! ## Т6. Глубина (I2) -/
@@ -374,6 +385,9 @@ theorem t7_redundant (P : Params) (anchors : List Anchor) (c : List Link) :
   | nil => rfl
   | cons r rest =>
     simp only [verify, verifyCore]
+    by_cases hw : allWF P (r :: rest) = true
+    rotate_left
+    · simp [hw]
     by_cases hj : jtiNoDup (r :: rest) = true
     · by_cases hr : rootOk P anchors r = true
       · by_cases hp : allPairs (pairCore P) (r :: rest) = true
@@ -395,7 +409,7 @@ theorem t7_redundant (P : Params) (anchors : List Anchor) (c : List Link) :
             simp only [step5, List.getLast?_eq_getElem?, List.length_cons, Nat.add_sub_cancel]
             rw [List.getElem?_eq_getElem (by simp)]
             simp [hlast]
-          simp [hj, hr, hp, hall, h5]
+          simp [hw, hj, hr, hp, hall, h5]
         · -- ядро не прошло: тогда не прошла и полная проверка пар
           have hall : allPairs (pairOk P) (r :: rest) = false := by
             cases h : allPairs (pairOk P) (r :: rest) with
@@ -407,7 +421,7 @@ theorem t7_redundant (P : Params) (anchors : List Anchor) (c : List Link) :
               have := h i hi
               simp only [pairOk, Bool.and_eq_true] at this
               exact this.1
-          simp [hj, hr, hp, hall]
+          simp [hw, hj, hr, hp, hall]
       · simp [hr]
     · simp [hj]
 
@@ -433,7 +447,8 @@ theorem t7_3c_redundant (P : Params) (anchors : List Anchor) (c : List Link) :
       simp only [rootOk, rootOkNo3c]
       cases r.delDepth == 0 <;> simp [Bool.and_assoc]
     rw [hsplit]
-    cases hj : jtiNoDup (r :: rest) <;> cases hn : rootOkNo3c P anchors r <;>
+    cases hw : allWF P (r :: rest) <;> cases hj : jtiNoDup (r :: rest) <;>
+      cases hn : rootOkNo3c P anchors r <;>
       cases hp : allPairs (pairOk P) (r :: rest) <;> cases h5 : step5 (r :: rest) <;> simp
     -- всё, кроме 3c, прошло: выводим 3c из шага 5 и 4d
     have hdr := depth_from_root hp rest.length (by simp)
@@ -445,7 +460,7 @@ theorem t7_3c_redundant (P : Params) (anchors : List Anchor) (c : List Link) :
 
 /-! ## Ловушки (ядро, `decide +kernel`) -/
 
-def PT : Params := ⟨50, 30, 1000, 8⟩
+def PT : Params := ⟨50, 30, 1000, 8, 32⟩
 def anchorsT : List Anchor := [⟨"root-key", "anchor-key"⟩]
 
 /-- Заполняет поля §3.2 согласованно: глубина = позиция, `par_hash` — хэш
@@ -538,6 +553,16 @@ example : verify { PT with maxTokenLifetime := 99 } anchorsT good = .deny := by 
 example : verify PT anchorsT (upd good 2 ({ · with parHash := some "h0" })) = .deny := by decide +kernel
 -- 2c: повтор jti
 example : verify PT anchorsT (upd good 2 ({ · with jti := "j0" })) = .deny := by decide +kernel
+
+-- 3n/4o: плохо сформированное ограничение у корня / у ребёнка
+def badMap : Tool × CMap := ("pay", ⟨[("amount", { c := .oneOf [] })], false⟩)
+example : verify PT anchorsT (mk [{ human with tools := [badMap] }]) = .deny := by decide +kernel
+example : verify PT anchorsT (mk [human, { aToB with tools := [badMap] }]) = .deny := by decide +kernel
+-- глубина ограничения сверх MAX_CONSTRAINT_DEPTH
+def deepMap : Tool × CMap := ("pay", ⟨[("amount", { c := .all [.all [.wildcard]] })], false⟩)
+example : verify { PT with maxConstraintDepth := 2 } anchorsT (mk [{ human with tools := [deepMap] }])
+    = .deny := by decide +kernel
+example : verify PT anchorsT (mk [{ human with tools := [deepMap] }]) = .allow := by decide +kernel
 
 -- шаг 6b: вызов против листа
 def payReq (n : Rat) : Call := ⟨"pay", [("amount", .num n)]⟩
