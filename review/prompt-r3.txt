@@ -1,0 +1,41 @@
+You are an adversarial reviewer of a Lean 4 model of a delegation-chain verifier
+(IETF draft-niyikiza-oauth-attenuating-agent-tokens, "AAT"). Do not praise it.
+Two earlier reviews were done by a different model. You are an independent
+second opinion: you may disagree with them.
+
+Already known (do not report again unless you show the handling is wrong):
+- No signatures: `issuer` is a free string (T3, later).
+- `verify` gets no request, presenter or audience; `allow` = "chain is
+  well-formed", not "call authorised" (stated in the header comment).
+- `Linked` compares names, not a reference to the parent token, so a child can
+  be spliced under another parent with the same holder (stated in header).
+- `Key := String` accepts "" as a root key; `trustedRoots` is a flat list;
+  no length cap on chains.
+- Step 4 (argument constraints) must change both `Permits` and `narrowsB`
+  and re-prove T1; the T1 statement text stays the same.
+
+Fixed after earlier reviews (check that the fix is right):
+- lakefile builds every module under AatLean/ via
+  `globs = ["AatLean", "AatLean.+"]`, so an unimported file is not skipped.
+- `verify_allow_iff` uses `c ≠ [] ∧ (∀ h : 0 < c.length, RootTrusted ... c[0]) ∧ ...`.
+- `root_trusted` derives its index proof from `hv` (no extra hypothesis).
+- Traps now include widening at the first, an interior, and the last pair,
+  5-link chains, and `Narrows` proved and refuted directly from `Permits`.
+
+Your tasks:
+1. Read the definitions and theorem STATEMENTS (ignore proofs; the Lean kernel
+   checks them). Does `t1_monotone` say what its docstring says? Is any
+   statement vacuous, too weak, or quantified wrongly?
+2. Find a chain that `verify` accepts but the stated intent ("rights never
+   widen along the chain, root is trusted, each link is issued by the previous
+   holder") rejects, or the reverse. Give Lean syntax.
+3. Find a plausible bug in `checkPairs`, `narrowsB`, `linkedB` or `verify`
+   that NONE of the `example ... := by decide` traps would catch (assume the
+   theorems are deleted). Give the mutated definition and the trap that would
+   catch it.
+4. Is anything in the header comment still inaccurate? Quote it.
+5. Anything else an IETF OAuth WG reviewer would object to in the model
+   itself, beyond the known list above.
+
+For every claim give a concrete counterexample (Lean 4 code that should
+compile against this file) or say "no counterexample found". No style notes.
