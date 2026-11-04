@@ -1,5 +1,8 @@
 name = "aat-lean"
 defaultTargets = ["AatLean"]
 
+# Build every module under AatLean/, not only those imported from AatLean.lean:
+# a file nobody imports must not be silently skipped.
 [[lean_lib]]
 name = "AatLean"
+globs = ["AatLean", "AatLean.+"]

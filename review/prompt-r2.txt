@@ -1,0 +1,41 @@
+You are an adversarial reviewer of a Lean 4 model of a delegation-chain verifier
+(IETF draft-niyikiza-oauth-attenuating-agent-tokens, "AAT"). Do not praise it.
+This is ROUND 2. Do not repeat round-1 findings unless a fix is wrong.
+
+Round-1 findings and their status:
+- Forged issuer strings (no signatures): KNOWN, out of scope until T3.
+- `verify` takes no request/caller, so `allow` = "chain well-formed", not
+  "call authorised": ACKNOWLEDGED in the header comment, fix planned in T2.
+- "Only `Permits` changes in step 4" was false (narrowsB must change too):
+  wording FIXED in the header comment.
+- `lake build` skipped unimported files: FIXED, lakefile now has
+  `globs = ["AatLean", "AatLean.+"]` (full lakefile below).
+- Redundant `h0` in `root_trusted`: FIXED (index proof now derived from `hv`).
+- Fragile `∃ h : c ≠ []` in `verify_allow_iff`: REPLACED by
+  `c ≠ [] ∧ (∀ h : 0 < c.length, RootTrusted trustedRoots c[0]) ∧ ...`.
+- Traps only tested code output: ADDED a trap derived via `Permits` +
+  `widening_rejected`, and 5-link chains.
+
+lakefile.toml:
+    name = "aat-lean"
+    defaultTargets = ["AatLean"]
+    [[lean_lib]]
+    name = "AatLean"
+    globs = ["AatLean", "AatLean.+"]
+
+Your tasks:
+1. Check each fix above. Is any fix wrong, incomplete, or did it weaken a
+   statement? In particular: is the new `verify_allow_iff` still an exact
+   characterisation, and is `root_trusted` still non-vacuous?
+2. Find a concrete chain that `verify` accepts but the intent ("rights never
+   widen along the chain, root is trusted, each link is issued by the
+   previous holder") rejects, or vice versa. Give it as Lean syntax.
+3. Any theorem vacuous or weaker than it looks (quantifier order, swapped
+   arguments, off-by-one, empty/singleton cases)?
+4. Is the header comment now accurate about what is and is not guaranteed?
+   Quote any sentence that still overstates.
+5. Anything else a reviewer at the IETF OAuth WG would object to in the model
+   itself (not in missing features already listed above).
+
+For every claim give a concrete counterexample (Lean code that should compile)
+or say "no counterexample found". No style suggestions.
