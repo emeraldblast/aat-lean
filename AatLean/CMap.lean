@@ -194,6 +194,8 @@ example : permitsArgs ⟨[("path", exA)], true⟩ [("path", .str "a"), ("x", .nu
   decide +kernel
 -- обязательный аргумент отсутствует — отказ; необязательный — можно опустить
 example : permitsArgs ⟨[("path", exA)], false⟩ [] = false := by decide +kernel
+-- "*" не отменяет обязательность названного аргумента (DeepSeek, раунд 4)
+example : permitsArgs ⟨[("path", exA)], true⟩ [] = false := by decide +kernel
 example : permitsArgs ⟨[("limit", r100opt)], false⟩ [] = true := by decide +kernel
 -- необязательный, но присутствует — обязан удовлетворять ограничению
 example : permitsArgs ⟨[("limit", r100opt)], false⟩ [("limit", .num 500)] = false := by

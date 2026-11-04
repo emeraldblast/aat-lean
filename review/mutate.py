@@ -68,6 +68,11 @@ SUITES = {
                 "    | some _ => true\n"),
             "6b: named value not checked": (
                 "    | some e => check e.c v\n", "    | some _ => true\n"),
+            "6b: required args skipped when star": (
+                "  m.named.all (fun (k, _) =>\n    match m.get k with\n"
+                "    | some e => e.optional || argsHas args k\n    | none   => true)\n",
+                "  (m.star || m.named.all (fun (k, _) =>\n    match m.get k with\n"
+                "    | some e => e.optional || argsHas args k\n    | none   => true))\n"),
             "norm: empty map stays closed": (
                 "if m.named.isEmpty && !m.star then { m with star := true } else m", "m"),
             "4p2: child may name any key": (
