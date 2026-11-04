@@ -4,7 +4,13 @@ import pathlib
 import subprocess
 import tempfile
 
-OPENSSL = "/opt/homebrew/bin/openssl"
+import os
+import shutil
+
+# OpenSSL >= 3 with Ed25519; macOS system LibreSSL lacks it, so prefer Homebrew.
+OPENSSL = os.environ.get("OPENSSL") or next(
+    (p for p in ("/opt/homebrew/bin/openssl", "/usr/local/opt/openssl/bin/openssl")
+     if os.path.exists(p)), shutil.which("openssl") or "openssl")
 SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")  # SubjectPublicKeyInfo for Ed25519
 
 

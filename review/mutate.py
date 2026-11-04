@@ -189,6 +189,17 @@ SUITES = {
             '7i: jti not recorded': ('else (.allow, pop.jti :: seen)', 'else (.allow, seen)'),
         },
     ),
+    "AatLean/Extension/Revocation.lean": (
+        [("/-- **Т5.** Корень", "-- Ловушки")],
+        {
+            "revocation not checked": ("  | root :: _ => if revoked.contains root.jti then .deny else verify P anchors chain",
+                                       "  | root :: _ => verify P anchors chain"),
+            "revocation checks the leaf": ("  | root :: _ => if revoked.contains root.jti then .deny else verify P anchors chain",
+                                           "  | root :: _ => if revoked.contains (chain.getLast?.getD root).jti then .deny else verify P anchors chain"),
+            "invokeWithStatus skips status": ("  match verifyWithStatus P anchors revoked chain with\n  | .allow => invoke",
+                                              "  match Decision.allow with\n  | .allow => invoke"),
+        },
+    ),
 }
 
 

@@ -1,0 +1,7 @@
+aat-lean
+Copyright 2026 the aat-lean authors
+
+This product includes the AAT-02 JWS test-vector suite
+(vectors/upstream/aat-jws-vectors.json) from https://github.com/tenuo-ai/tenuo,
+commit 99fb00994d8d66b213cd12967d6e8eef45025672, licensed under the
+Apache License 2.0. The file is included unmodified.

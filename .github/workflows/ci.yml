@@ -1,0 +1,22 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lean (elan)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o elan-init.sh
+          sh elan-init.sh -y --no-modify-path --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Build and check all proofs
+        run: lake build
+      - name: No sorry, admit or native_decide
+        run: "! grep -rn 'sorry\\|admit\\|native_decide' AatLean Runner.lean"
+      - name: Mutation test (every plausible bug caught by a trap)
+        run: python3 review/mutate.py
+      - name: AAT-02 vector suite
+        run: |
+          sha256sum vectors/upstream/aat-jws-vectors.json | grep -q b7a42e9dfdce7fbc1f623670bf060f90e6d6b25f64384cbab1bd79363e82209b
+          python3 -I vectors/run.py
