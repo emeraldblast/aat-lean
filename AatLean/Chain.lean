@@ -21,7 +21,7 @@
 `verify` пока не получает ни запроса, ни предъявителя, ни получателя: `allow`
 значит «цепочка корректна», а не «этот вызов разрешён». Привязка запроса к
 правам листа — Т2. Привязка предъявителя (proof-of-possession) и получателя
-(`aud`) в Т1–Т5 не входит — открытый вопрос.
+(`aud`) в план Т1–Т5 не входит — открытый вопрос.
 
 `Linked` сравнивает имена (`child.issuer = parent.holder`), а не ссылку на
 конкретный родительский токен: один и тот же ребёнок проходит под любым
@@ -213,6 +213,14 @@ example : verify roots [human, aToB,
     { issuer := "agentB", holder := "agentC", tools := ["pay", "deploy"] },
     { issuer := "agentC", holder := "agentD", tools := ["pay", "deploy"] }]
     = .deny := by decide
+
+/-- Ребёнок короче родителя, но с чужим инструментом — отклоняется.
+    Ловит `narrowsB`, принимающий «меньше инструментов» за сужение. -/
+example : verify roots [human, { aToB with tools := ["deploy"] }] = .deny := by decide
+
+/-- Ребёнок выдан издателем родителя, а не его держателем, — отклоняется.
+    Ловит `linkedB`, сравнивающий ещё и с `parent.issuer`. -/
+example : verify roots [human, { aToB with issuer := "root-key" }] = .deny := by decide
 
 /-- Расширение на пятом звене из пяти — отклоняется. -/
 example : verify roots [human, aToB, l3, l4, { issuer := "agentD", holder := "agentE", tools := ["email"] }]
