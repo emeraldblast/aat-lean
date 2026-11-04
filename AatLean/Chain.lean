@@ -18,8 +18,14 @@
 проверка решает то утверждение, ради которого написана. Содержательной Т1
 станет на шаге 4, когда `Permits` получит семантику ограничений AAT.
 
-`verify` пока не получает запрос и вызывающего: `allow` значит «цепочка
-корректна», а не «этот вызов разрешён». Привязка запроса — Т2.
+`verify` пока не получает ни запроса, ни предъявителя, ни получателя: `allow`
+значит «цепочка корректна», а не «этот вызов разрешён». Привязка запроса к
+правам листа — Т2. Привязка предъявителя (proof-of-possession) и получателя
+(`aud`) в Т1–Т5 не входит — открытый вопрос.
+
+`Linked` сравнивает имена (`child.issuer = parent.holder`), а не ссылку на
+конкретный родительский токен: один и тот же ребёнок проходит под любым
+родителем с тем же держателем.
 -/
 
 namespace AAT
@@ -200,6 +206,14 @@ def l4 : Link := { issuer := "agentC", holder := "agentD", tools := ["pay"] }
 example : verify roots [human, aToB, l3, l4, { issuer := "agentD", holder := "agentE", tools := [] }]
     = .allow := by decide
 
+/-- Расширение в середине цепочки (пара 1 из 3), а не на последней паре.
+    Ловит `checkPairs`, проверяющий только последнюю пару: без этого примера
+    такую ошибку замечало только доказательство `checkPairs_iff`. -/
+example : verify roots [human, aToB,
+    { issuer := "agentB", holder := "agentC", tools := ["pay", "deploy"] },
+    { issuer := "agentC", holder := "agentD", tools := ["pay", "deploy"] }]
+    = .deny := by decide
+
 /-- Расширение на пятом звене из пяти — отклоняется. -/
 example : verify roots [human, aToB, l3, l4, { issuer := "agentD", holder := "agentE", tools := ["email"] }]
     = .deny := by decide
@@ -221,5 +235,18 @@ example : verify roots [human, aToB, l3, l4, { issuer := "agentD", holder := "ag
     = .deny :=
   widening_rejected roots _ 3 (by decide) ⟨"email"⟩
     (by simp [Permits]) (by simp [Permits, l4])
+
+/-- `Narrows` доказано напрямую из `Permits`, без `narrowsB_iff`:
+    спецификация проверяется независимо от Bool-проверки. -/
+example : Narrows human aToB := by
+  intro call h
+  simp only [Permits, aToB, human, List.mem_cons, List.not_mem_nil, or_false] at h ⊢
+  exact Or.inl h
+
+/-- И отрицание напрямую: ребёнок с `"email"` не сужает `aToB`. -/
+example : ¬ Narrows aToB { aToB with tools := ["email"] } := by
+  intro h
+  have := h ⟨"email"⟩ (by simp [Permits])
+  simp [Permits, aToB] at this
 
 end AAT
