@@ -51,6 +51,27 @@ the **same `invokeWithState` function the theorems are about**
   `cnf.jwk` form, sizes, duplicate JSON members, inadmissible numbers) that the
   model leaves to its stated assumptions.
 
+## Vigility: checking another implementation
+
+`vigility/` turns the model into a conformance checker for any AAT-02 verifier:
+
+```
+python3 -I vigility/check.py --impl "COMMAND" --seed 1 --count 300
+```
+
+It runs `COMMAND` (a JSON-lines protocol, see `vigility/check.py`) on the 229
+author vectors plus generated signed chains (`vigility/generate.py`: 1–4 tokens,
+all nine constraint types, one mutation per vector against a §8 step), and
+compares every verdict with the Lean model. The report groups disagreements by
+§8 step and marks the dangerous ones (model DENY, implementation PERMIT).
+
+- `vigility/examples/model_impl.py` answers with the model itself: 529 of 529 agree,
+  which checks the harness.
+- `vigility/examples/naive_impl.py` is a **demo** verifier with three deliberate bugs
+  (range inclusivity, no `par_hash` check, no chain `aud` check). Vigility reports all
+  three, from the author vectors and independently from the generated chains, with
+  no false alarms.
+
 ## Assumptions
 
 1. Signatures cannot be forged; SHA-256 and `jwk_thumbprint_uri` are injective.
