@@ -30,13 +30,16 @@ All theorems hold for chains of any length. No `sorry`, `admit` or
 | T6 | Depth equals position; chain length ≤ `MAX_DELEGATION_DEPTH` + 1 (I2) | `t6_depth`, `t6_length` |
 | **T7** | Steps 4e, 4f and 5 never change a verdict: `verify` equals the algorithm without them, on all inputs | `t7_redundant` |
 | **T7′** | Step 3c is redundant too, given step 5 and 4d: 3c and step 5 are mutually redundant | `t7_3c_redundant` |
+| **T7″** | Step 4b5 (a derived token's `iss` and `par_hash` present and strings) never changes a verdict: 4c and 4q reject what it rejects, given non-empty key thumbprints | `t7_4b5_redundant` |
+| — | Claims parsing in the model (3b–3m, 4b–4n, 7b–7c): an accepted presentation parses into a chain and PoP that `invokeWithState` accepts, so T1–T9 apply to tokens as written | `invokeTokens_allow` |
 | T8 | Every `aud` in the chain names this enforcement point (6c) | `t8_aud` |
 | T9 | The PoP is signed by the leaf holder's key and binds the leaf, tool, arguments and time window (step 7, I6); a replayed PoP is rejected | `t9_pop`, `t9_replay` |
 | T5 | Extension per §9.8: revoking a root rejects every chain that starts at it | `t5_revocation`, `t5_revokes_descendants` |
 
 T7 is a machine-checked confirmation of findings B9 and B10 in
 [Davliatshin's implementation report](https://datatracker.ietf.org/doc/draft-davliatshin-oauth-attenuation-chains-report/)
-and of the notes to §8. T7′ is the converse direction, not stated there.
+and of the notes to §8. T7′ is the converse direction, not stated there; T7″
+(step 4b5) is not stated there either.
 
 ## Conformance with the author's vectors
 
@@ -105,9 +108,9 @@ compares every verdict with the Lean model. The report groups disagreements by
 ## Mutation test
 
 `python3 review/mutate.py` mutates each check of the verifier and confirms that
-some kernel-checked `example` fails. 119 mutations are caught. Exactly four
-survive — steps 3c, 4e, 4f and 5 — which is what T7 and T7′ predict: no input
-can distinguish them.
+some kernel-checked `example` fails. 119 mutations are caught. Exactly five
+survive — steps 3c, 4e, 4f, 5 and 4b5 — which is what T7, T7′ and T7″ predict:
+no input can distinguish them.
 
 ## Layout
 

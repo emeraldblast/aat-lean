@@ -249,6 +249,9 @@ SUITES = {
                 "some (kvs.map (·.1))"),
             "7c: hta need not be an object": (
                 "    | some (.obj _) => q.hta\n    | _ => none\n", "    | _ => q.hta\n"),
+            "4b5 (redundant by T7″)": (
+                "  guard (check4b5 isRoot t)                                          -- 4b5\n",
+                "  guard true\n"),
             "7c: PoP iat optional": (
                 '  let iat ← p.field "iat" >>= JVal.asInt                             -- 7c',
                 '  let iat := (p.field "iat" >>= JVal.asInt).getD 50'),
@@ -273,9 +276,11 @@ def compiles(path: pathlib.Path) -> bool:
     return r.returncode == 0
 
 
-# Mutations that must survive: T7 (t7_redundant) proves these steps never change a verdict.
+# Mutations that must survive: T7, T7′, T7″ (t7_redundant, t7_3c_redundant, t7_4b5_redundant)
+# prove these steps never change a verdict.
 EXPECTED_SURVIVORS = {"4e (redundant by T7)", "4f (redundant by T7)", "step 5 (redundant by T7)",
-                      "3c (redundant by T7')"}
+                      "3c (redundant by T7')",
+                      "4b5 (redundant by T7″)"}
 
 
 def main() -> int:

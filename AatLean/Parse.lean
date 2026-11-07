@@ -137,28 +137,50 @@ structure RawToken where
   /-- Карты ограничений по имени инструмента (разбор ограничений — снаружи). -/
   maps     : List (Tool × CMap)
 
-/-- Разбор одного токена (`isRoot` — корень: шаги 3; иначе 4b, 4n). -/
-def parseLink (isRoot : Bool) (t : RawToken) : Option Link := do
+/-- Разбор одного токена без держателя, `iss` и `par_hash` (их задаёт
+    `parseLinkCore`); `isRoot` — корень: шаги 3, иначе 4b, 4n. -/
+def parseFields (isRoot : Bool) (t : RawToken) : Option Link := do
   let p := t.payload
   guard p.noDup                                                      -- 3b, 4b
   let jti ← p.field "jti" >>= JVal.asNonEmpty                        -- 3j, 4b1
   let jwk ← p.field "cnf" >>= (·.field "jwk")                        -- 3l, 4b2
   guard (jwkOk jwk)
-  let holder ← t.thumb
   let names ← p.field "authorization_details" >>= aatTools           -- 3m, 4b3, 4n
   let tools ← names.mapM (fun n => (t.maps.lookup n).map (n, ·))
   let dd ← p.field "del_depth" >>= JVal.asNat                        -- 3c, 4b4
   let dmd ← p.field "del_max_depth" >>= JVal.asNat                   -- 3i, 4b4
-  let iss ← p.field "iss" >>= JVal.asStr                             -- 3k, 4b5
+  if isRoot then guard (p.field "iss" >>= JVal.asStr).isSome         -- 3k
   let iat ← p.field "iat" >>= JVal.asInt                             -- 3b, 4b5
   let exp ← p.field "exp" >>= JVal.asInt                             -- 3b, 4b5
-  let parHash ←
-    if isRoot then
-      -- 3d проверяет отсутствие; не строка — тоже «присутствует»
-      pure ((p.field "par_hash").map (fun v => v.asStr.getD ""))
-    else (p.field "par_hash" >>= JVal.asStr).map some                -- 4b5
-  pure { issuer := iss, holder, tools, jti, delDepth := dd, delMaxDepth := dmd, iat, exp, parHash,
-         selfHash := t.selfHash, sigBy := t.sigBy, aud := audOf (p.field "aud") }
+  pure { issuer := "", holder := "", tools, jti, delDepth := dd, delMaxDepth := dmd, iat, exp,
+         parHash := none, selfHash := t.selfHash, sigBy := t.sigBy, aud := audOf (p.field "aud") }
+
+/-- `iss`; не строка или нет — `""` (у корня это уже отвергнуто, 3k). -/
+def issOf (t : RawToken) : String := (t.payload.field "iss" >>= JVal.asStr).getD ""
+
+/-- `par_hash`. У корня 3d проверяет отсутствие, поэтому не строка — тоже
+    «присутствует»; у производного — строка или `none`. -/
+def parHashOf (isRoot : Bool) (t : RawToken) : Option String :=
+  if isRoot then (t.payload.field "par_hash").map (fun v => v.asStr.getD "")
+  else t.payload.field "par_hash" >>= JVal.asStr
+
+/-- Разбор звена без шага 4b5. -/
+def parseLinkCore (isRoot : Bool) (t : RawToken) : Option Link := do
+  let holder ← t.thumb
+  let l ← parseFields isRoot t
+  pure { l with holder, issuer := issOf t, parHash := parHashOf isRoot t }
+
+/-- Шаг 4b5 для производного: `iss` и `par_hash` присутствуют и строки
+    (`iat`, `exp` — в `parseFields`). -/
+def check4b5 (isRoot : Bool) (t : RawToken) : Bool :=
+  isRoot || ((t.payload.field "iss" >>= JVal.asStr).isSome &&
+             (t.payload.field "par_hash" >>= JVal.asStr).isSome)
+
+/-- Разбор одного токена (`isRoot` — корень: шаги 3; иначе 4b, 4n). -/
+def parseLink (isRoot : Bool) (t : RawToken) : Option Link := do
+  let l ← parseLinkCore isRoot t
+  guard (check4b5 isRoot t)                                          -- 4b5
+  pure l
 
 /-- Разбор цепочки: корень, затем производные. -/
 def parseChain : List RawToken → Option (List Link)
@@ -166,6 +188,14 @@ def parseChain : List RawToken → Option (List Link)
   | r :: rest => do
     let l ← parseLink true r
     let ls ← rest.mapM (parseLink false)
+    pure (l :: ls)
+
+/-- Разбор цепочки без шага 4b5. -/
+def parseChainCore : List RawToken → Option (List Link)
+  | [] => some []
+  | r :: rest => do
+    let l ← parseLinkCore true r
+    let ls ← rest.mapM (parseLinkCore false)
     pure (l :: ls)
 
 /-- PoP JWT, как его видит модель. -/
@@ -212,6 +242,173 @@ theorem invokeTokens_allow {P : Params} {E : Endpoint} {anchors : List Anchor}
   · rename_i chain pop hc hp
     exact ⟨chain, pop, hc, hp, h⟩
   · simp at h
+
+/-- `invokeTokens` без шага 4b5. -/
+def invokeTokensCore (P : Params) (E : Endpoint) (anchors : List Anchor) (raw : List RawToken)
+    (call : Call) (rp : RawPoP) (seen : List String) : Decision × List String :=
+  match parseChainCore raw, parsePoP rp with
+  | some chain, some pop => invokeWithState P E anchors chain call pop seen
+  | _, _ => (.deny, seen)
+
+theorem parseLink_core {b : Bool} {t : RawToken} {l : Link} (h : parseLink b t = some l) :
+    parseLinkCore b t = some l := by
+  unfold parseLink at h
+  cases hc : parseLinkCore b t with
+  | none => simp [hc] at h
+  | some l' =>
+    simp only [hc, Option.bind_eq_bind, Option.bind_some] at h
+    cases h4 : check4b5 b t <;> simp_all [guard, failure]
+
+theorem parseLink_of_core {b : Bool} {t : RawToken} {l : Link} (h : parseLinkCore b t = some l)
+    (h4 : check4b5 b t = true) : parseLink b t = some l := by
+  simp [parseLink, h, h4, guard]
+
+theorem core_spec {b : Bool} {t : RawToken} {l : Link} (h : parseLinkCore b t = some l) :
+    t.thumb = some l.holder ∧ l.issuer = issOf t ∧ l.parHash = parHashOf b t := by
+  unfold parseLinkCore at h
+  cases ht : t.thumb with
+  | none => simp [ht] at h
+  | some k =>
+    cases hf : parseFields b t with
+    | none => simp [ht, hf] at h
+    | some l0 =>
+      simp only [ht, hf, Option.bind_eq_bind, Option.bind_some, Option.pure_def,
+        Option.some.injEq] at h
+      subst h
+      exact ⟨rfl, rfl, rfl⟩
+
+theorem mapM_core : ∀ (ts : List RawToken) (ls : List Link),
+    ts.mapM (parseLink false) = some ls → ts.mapM (parseLinkCore false) = some ls
+  | [], ls, h => by simpa using h
+  | t :: ts, ls, h => by
+    simp only [List.mapM_cons, Option.bind_eq_bind, Option.pure_def] at h ⊢
+    cases hl : parseLink false t with
+    | none => simp [hl] at h
+    | some l =>
+      cases hr : ts.mapM (parseLink false) with
+      | none => simp [hl, hr] at h
+      | some ls' =>
+        simp [hl, hr] at h
+        simp [parseLink_core hl, mapM_core ts ls' hr, h]
+
+theorem chain_core {raw : List RawToken} {c : List Link} (h : parseChain raw = some c) :
+    parseChainCore raw = some c := by
+  cases raw with
+  | nil => simpa [parseChain, parseChainCore] using h
+  | cons r rest =>
+    simp only [parseChain, parseChainCore, Option.bind_eq_bind, Option.pure_def] at h ⊢
+    cases hl : parseLink true r with
+    | none => simp [hl] at h
+    | some l =>
+      cases hr : rest.mapM (parseLink false) with
+      | none => simp [hl, hr] at h
+      | some ls => simp [hl, hr] at h; simp [parseLink_core hl, mapM_core rest ls hr, h]
+
+/-- Производный токен, прошедший шаги 4c и 4q, прошёл бы и 4b5. -/
+theorem check4b5_of {t : RawToken} {l : Link} (h : parseLinkCore false t = some l)
+    (hi : l.issuer ≠ "") (hp : l.parHash.isSome) : check4b5 false t = true := by
+  obtain ⟨_, hiss, hph⟩ := core_spec h
+  simp only [check4b5, Bool.false_or, Bool.and_eq_true]
+  refine ⟨?_, ?_⟩
+  · rw [hiss] at hi
+    cases hx : (t.payload.field "iss" >>= JVal.asStr) <;> simp_all [issOf]
+  · rw [hph] at hp
+    simpa [parHashOf] using hp
+
+theorem mapM_lift (P : Params) : ∀ (parent : Link) (ts : List RawToken) (ls : List Link),
+    parent.holder ≠ "" → (∀ t ∈ ts, t.thumb ≠ some "") →
+    ts.mapM (parseLinkCore false) = some ls → allPairs (pairOk P) (parent :: ls) = true →
+    ts.mapM (parseLink false) = some ls
+  | _, [], ls, _, _, h, _ => by simpa using h
+  | parent, t :: ts, ls, hpar, hk, h, hp => by
+    simp only [List.mapM_cons, Option.bind_eq_bind, Option.pure_def] at h ⊢
+    cases hl : parseLinkCore false t with
+    | none => simp [hl] at h
+    | some l =>
+      cases hr : ts.mapM (parseLinkCore false) with
+      | none => simp [hl, hr] at h
+      | some ls' =>
+        simp [hl, hr] at h
+        subst h
+        simp only [allPairs, Bool.and_eq_true] at hp
+        obtain ⟨hpair, hrest⟩ := hp
+        have hc := (pairCore_spec (by simp only [pairOk, Bool.and_eq_true] at hpair; exact hpair.1))
+        have hiss : l.issuer = parent.holder := hc.2.1
+        have hph : l.parHash = some parent.selfHash := hc.2.2.2.2.2.2.2.2.2.2.2
+        have h4 := check4b5_of hl (by rw [hiss]; exact hpar) (by simp [hph])
+        have hhold : l.holder ≠ "" := by
+          intro he
+          have := (core_spec hl).1
+          rw [he] at this
+          exact hk t (by simp) this
+        have ih := mapM_lift P l ts ls' hhold (fun t' ht' => hk t' (by simp [ht'])) hr hrest
+        simp [parseLink_of_core hl h4, ih]
+
+theorem invokeWithState_deny (P : Params) (E : Endpoint) (anchors : List Anchor) (c : List Link)
+    (call : Call) (pop : PoP) (seen : List String)
+    (h : (invokeWithState P E anchors c call pop seen).1 ≠ .allow) :
+    invokeWithState P E anchors c call pop seen = (.deny, seen) := by
+  unfold invokeWithState at h ⊢
+  cases hi : invoke P E anchors c call pop with
+  | deny => rfl
+  | allow =>
+    simp only [hi] at h ⊢
+    by_cases ht : E.trackJti <;> by_cases hs : seen.contains pop.jti <;> simp_all
+
+theorem verify_of_state {P : Params} {E : Endpoint} {anchors : List Anchor} {c : List Link}
+    {call : Call} {pop : PoP} {seen : List String}
+    (h : (invokeWithState P E anchors c call pop seen).1 = .allow) : verify P anchors c = .allow := by
+  have hi : invoke P E anchors c call pop = .allow := by
+    unfold invokeWithState at h
+    cases hi : invoke P E anchors c call pop <;> simp_all
+  exact ((authorize_allow_iff P anchors c call).mp (invoke_authorizes hi)).1
+
+theorem allPairs_of_verify {P : Params} {anchors : List Anchor} {c : List Link}
+    (hv : verify P anchors c = .allow) : allPairs (pairOk P) c = true :=
+  (allPairs_iff (pairOk P) c).mpr (fun i hi => pair_of_allow hv i hi)
+
+/-- **Т7″.** Шаг 4b5 (`iss` и `par_hash` производного присутствуют и строки)
+    не меняет ни одного вердикта, если отпечатки ключей непусты: без `iss`
+    отказывает 4c (`iss` = отпечаток ключа родителя), без `par_hash` — 4q. -/
+theorem t7_4b5_redundant (P : Params) (E : Endpoint) (anchors : List Anchor) (raw : List RawToken)
+    (call : Call) (rp : RawPoP) (seen : List String) (hk : ∀ t ∈ raw, t.thumb ≠ some "") :
+    invokeTokens P E anchors raw call rp seen = invokeTokensCore P E anchors raw call rp seen := by
+  unfold invokeTokens invokeTokensCore
+  cases hpc : parseChain raw with
+  | some c => simp [chain_core hpc]
+  | none =>
+    cases hcc : parseChainCore raw with
+    | none => simp
+    | some c =>
+      cases hpp : parsePoP rp with
+      | none => simp
+      | some pop =>
+        simp only
+        symm
+        apply invokeWithState_deny
+        intro hallow
+        -- разрешение на ядре → разбор с 4b5 тоже проходит: противоречие с `hpc`
+        have hp := allPairs_of_verify (verify_of_state hallow)
+        cases raw with
+        | nil => simp [parseChain] at hpc
+        | cons r rest =>
+          simp only [parseChainCore, Option.bind_eq_bind, Option.pure_def] at hcc
+          cases hl : parseLinkCore true r with
+          | none => simp [hl] at hcc
+          | some l =>
+            cases hr : rest.mapM (parseLinkCore false) with
+            | none => simp [hl, hr] at hcc
+            | some ls =>
+              simp [hl, hr] at hcc
+              subst hcc
+              have hhold : l.holder ≠ "" := by
+                intro he
+                have := (core_spec hl).1
+                rw [he] at this
+                exact hk r (by simp) this
+              have hlift := mapM_lift P l rest ls hhold (fun t ht => hk t (by simp [ht])) hr hp
+              have hroot : parseLink true r = some l := parseLink_of_core hl (by simp [check4b5])
+              simp [parseChain, hroot, hlift] at hpc
 
 /-! ## Ловушки (ядро, `decide +kernel`) -/
 
