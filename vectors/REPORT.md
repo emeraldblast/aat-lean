@@ -1,7 +1,7 @@
 # Прогон Lean-модели на векторах AAT-02
 
 Набор: `vectors/upstream/aat-jws-vectors.json` (229 векторов).
-В зоне модели: **209**; совпало **209 из 209**.
+В зоне модели: **224**; совпало **224 из 224**.
 Состояние σ после вызова (PoP `jti`) сверено на 3 векторах: совпало 3.
 
 ## В зоне модели по ожидаемому шагу
@@ -9,7 +9,10 @@
 | Ожидается | Шаг | Векторов |
 |---|---|---|
 | DENY | 1 | 1 |
+| DENY | 2a | 1 |
+| DENY | 2b | 1 |
 | DENY | 2c | 2 |
+| DENY | 3a | 6 |
 | DENY | 3b | 4 |
 | DENY | 3c | 2 |
 | DENY | 3d | 1 |
@@ -23,6 +26,7 @@
 | DENY | 3l | 2 |
 | DENY | 3m | 4 |
 | DENY | 3n | 17 |
+| DENY | 4a | 3 |
 | DENY | 4b | 3 |
 | DENY | 4b1 | 1 |
 | DENY | 4b2 | 3 |
@@ -48,6 +52,7 @@
 | DENY | 4q | 2 |
 | DENY | 6b | 24 |
 | DENY | 6c | 4 |
+| DENY | 7a | 4 |
 | DENY | 7b | 2 |
 | DENY | 7c | 5 |
 | DENY | 7d | 3 |
@@ -66,9 +71,4 @@
 
 | Причина | Векторов |
 |---|---|
-| expected step 3a not modeled | 6 |
 | precondition: inadmissible number (assumption 6) | 5 |
-| expected step 7a not modeled | 4 |
-| expected step 4a not modeled | 3 |
-| expected step 2a not modeled | 1 |
-| expected step 2b not modeled | 1 |

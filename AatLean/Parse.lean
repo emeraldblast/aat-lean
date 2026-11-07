@@ -17,6 +17,9 @@ import AatLean.Invoke
 - 3m, 4b3, 4n — `authorization_details`: массив ровно с одной записью типа
   `attenuating_agent_token`, `tools` — объект, значения которого — объекты.
 
+До разбора claims (`framesOk`): 2a, 2b — размеры токенов и цепочки; 3a, 4a,
+7a — заголовок JWS (`alg = "Ed25519"`, `typ`, `crit`), тоже как записан.
+
 Остаётся снаружи (декодер, допущения 1, 5, 6): подпись (`sigBy`), SHA-256
 signing input (`selfHash`), отпечаток `cnf.jwk` (`thumb`), содержимое карт
 ограничений (`maps`, второй этап) и значения аргументов `hta` (JCS).
@@ -129,6 +132,10 @@ def audOf : Option JVal → Option (List String)
 
 /-- Токен цепочки, как его видит модель. -/
 structure RawToken where
+  /-- JWS Protected Header как записан. -/
+  header   : JVal
+  /-- Размер компактной сериализации в байтах (шаги 2a, 2b). -/
+  size     : Nat
   payload  : JVal
   /-- `jwk_thumbprint_uri(cnf.jwk)` (допущение 5); `none` — не вычислим. -/
   thumb    : Option Key
@@ -200,6 +207,7 @@ def parseChainCore : List RawToken → Option (List Link)
 
 /-- PoP JWT, как его видит модель. -/
 structure RawPoP where
+  header  : JVal
   payload : JVal
   sigBy   : List Key
   /-- `hta` как аргументы (значения по JCS — снаружи, допущение 6). -/
@@ -219,13 +227,47 @@ def parsePoP (q : RawPoP) : Option PoP := do
   pure { jti := s "jti", aatId := s "aat_id", aatHash := s "aat_hash", aatTool := s "aat_tool",
          iat, hta, aatAud := opt "aat_aud", nonce := opt "nonce", sigBy := q.sigBy }
 
-/-- Шаги 1–7i на токенах как они записаны: разбор, затем `invokeWithState`.
-    Ошибка разбора — DENY, состояние не меняется. -/
+/-- Параметры `crit`, которые понимает эта точка проверки (§3.5): никаких. -/
+def critUnderstood : List String := []
+
+/-- Шаги 3a, 4a, 7a. `alg` — `Ed25519` (единственный в списке разрешённых;
+    ключи — только OKP/Ed25519, прочтение 3l, поэтому `alg` согласован с
+    ключом); `typ` — ровно `typ`; `crit`, если есть, — непустой массив
+    строк из `critUnderstood`. Повтор имени в заголовке — отказ (RFC 7515 §4
+    разрешает отвергать). -/
+def headerOk (typ : String) (h : JVal) : Bool :=
+  h.noDup &&
+  (h.field "alg" >>= JVal.asStr) == some "Ed25519" &&
+  (h.field "typ" >>= JVal.asStr) == some typ &&
+  (match h.field "crit" with
+   | none => true
+   | some (.arr xs) =>
+     !xs.isEmpty && xs.all (fun x => match x.asStr with
+       | some s => critUnderstood.contains s
+       | none => false)
+   | some _ => false)
+
+/-- Шаги 2a, 2b: размер каждого токена и цепочки. -/
+def sizesOk (P : Params) (raw : List RawToken) : Bool :=
+  raw.all (fun t => decide (t.size ≤ P.maxTokenSize)) &&
+  decide ((raw.map (·.size)).sum ≤ P.maxChainSize)
+
+/-- Шаги 2a, 2b, 3a, 4a, 7a — до разбора claims. -/
+def framesOk (P : Params) (raw : List RawToken) (rp : RawPoP) : Bool :=
+  sizesOk P raw &&                                                   -- 2a, 2b
+  raw.all (fun t => headerOk "aat+jwt" t.header) &&                  -- 3a, 4a
+  headerOk "aat-pop+jwt" rp.header                                   -- 7a
+
+/-- Шаги 1–7i на токенах как они записаны: размеры и заголовки, разбор, затем
+    `invokeWithState`. Любой отказ до `invokeWithState` — DENY, состояние не
+    меняется. -/
 def invokeTokens (P : Params) (E : Endpoint) (anchors : List Anchor) (raw : List RawToken)
     (call : Call) (rp : RawPoP) (seen : List String) : Decision × List String :=
-  match parseChain raw, parsePoP rp with
-  | some chain, some pop => invokeWithState P E anchors chain call pop seen
-  | _, _ => (.deny, seen)
+  if framesOk P raw rp then
+    match parseChain raw, parsePoP rp with
+    | some chain, some pop => invokeWithState P E anchors chain call pop seen
+    | _, _ => (.deny, seen)
+  else (.deny, seen)
 
 /-! ## Перенос теорем -/
 
@@ -238,17 +280,22 @@ theorem invokeTokens_allow {P : Params} {E : Endpoint} {anchors : List Anchor}
     ∃ chain pop, parseChain raw = some chain ∧ parsePoP rp = some pop ∧
       (invokeWithState P E anchors chain call pop seen).1 = .allow := by
   unfold invokeTokens at h
-  split at h
-  · rename_i chain pop hc hp
-    exact ⟨chain, pop, hc, hp, h⟩
-  · simp at h
+  by_cases hf : framesOk P raw rp = true
+  · simp only [hf, ite_true] at h
+    split at h
+    · rename_i chain pop hc hp
+      exact ⟨chain, pop, hc, hp, h⟩
+    · simp at h
+  · simp [hf] at h
 
 /-- `invokeTokens` без шага 4b5. -/
 def invokeTokensCore (P : Params) (E : Endpoint) (anchors : List Anchor) (raw : List RawToken)
     (call : Call) (rp : RawPoP) (seen : List String) : Decision × List String :=
-  match parseChainCore raw, parsePoP rp with
-  | some chain, some pop => invokeWithState P E anchors chain call pop seen
-  | _, _ => (.deny, seen)
+  if framesOk P raw rp then
+    match parseChainCore raw, parsePoP rp with
+    | some chain, some pop => invokeWithState P E anchors chain call pop seen
+    | _, _ => (.deny, seen)
+  else (.deny, seen)
 
 theorem parseLink_core {b : Bool} {t : RawToken} {l : Link} (h : parseLink b t = some l) :
     parseLinkCore b t = some l := by
@@ -374,6 +421,10 @@ theorem t7_4b5_redundant (P : Params) (E : Endpoint) (anchors : List Anchor) (ra
     (call : Call) (rp : RawPoP) (seen : List String) (hk : ∀ t ∈ raw, t.thumb ≠ some "") :
     invokeTokens P E anchors raw call rp seen = invokeTokensCore P E anchors raw call rp seen := by
   unfold invokeTokens invokeTokensCore
+  by_cases hf : framesOk P raw rp = true
+  rotate_left
+  · simp [hf]
+  simp only [hf, ite_true]
   cases hpc : parseChain raw with
   | some c => simp [chain_core hpc]
   | none =>
@@ -424,9 +475,11 @@ def payloadT (l : Link) (iat exp dd dmd : String) : JVal :=
          ("authorization_details", adT (l.tools.map (fun (t, _) => (t, .obj []))))] ++
         (match l.parHash with | some h => [("par_hash", .str h)] | none => []))
 
+def hdrT (typ : String) : JVal := .obj [("alg", .str "Ed25519"), ("typ", .str typ)]
+
 def rawT (l : Link) (iat exp dd dmd : String) : RawToken :=
-  { payload := payloadT l iat exp dd dmd, thumb := some l.holder, selfHash := l.selfHash,
-    sigBy := l.sigBy, maps := l.tools }
+  { header := hdrT "aat+jwt", size := 100, payload := payloadT l iat exp dd dmd,
+    thumb := some l.holder, selfHash := l.selfHash, sigBy := l.sigBy, maps := l.tools }
 
 /-- Замена члена верхнего уровня (или добавление в конец). -/
 def JVal.set (v : JVal) (k : String) (x : JVal) : JVal :=
@@ -449,7 +502,8 @@ def childRawT : RawToken := rawT (linkT 1) "0" "100" "1" "8"
 def popPayloadT : JVal :=
   .obj [("jti", .str popT.jti), ("aat_id", .str popT.aatId), ("aat_hash", .str popT.aatHash),
         ("aat_tool", .str popT.aatTool), ("iat", .num "50"), ("aat_aud", .str "ep"), ("hta", .obj [])]
-def popRawT : RawPoP := { payload := popPayloadT, sigBy := popT.sigBy, hta := popT.hta }
+def popRawT : RawPoP := { header := hdrT "aat-pop+jwt", payload := popPayloadT, sigBy := popT.sigBy,
+                          hta := popT.hta }
 
 def runT (r c : RawToken) (q : RawPoP := popRawT) : Decision :=
   (invokeTokens PT ET anchorsT [r, c] callT q []).1
@@ -509,6 +563,27 @@ example : runT rootRawT (withChild (·.set "authorization_details"
 example : runT rootRawT (withChild (·.drop "iss")) = .deny := by decide +kernel
 example : runT rootRawT (withChild (·.drop "par_hash")) = .deny := by decide +kernel
 example : runT rootRawT (withChild (·.set "par_hash" (.num "1"))) = .deny := by decide +kernel
+-- 2a, 2b: размеры (PT: токен ≤ 1000, цепочка ≤ 1500)
+example : runT { rootRawT with size := 1000 } childRawT = .allow := by decide +kernel
+example : runT { rootRawT with size := 1001 } childRawT = .deny := by decide +kernel
+example : runT { rootRawT with size := 800 } { childRawT with size := 800 } = .deny := by decide +kernel
+-- 3a, 4a, 7a: alg, typ, crit
+def withHdr (t : RawToken) (f : JVal → JVal) : RawToken := { t with header := f t.header }
+def withPoPHdr (f : JVal → JVal) : RawPoP := { popRawT with header := f popRawT.header }
+example : runT (withHdr rootRawT (·.set "alg" (.str "EdDSA"))) childRawT = .deny := by decide +kernel
+example : runT (withHdr rootRawT (·.set "alg" (.str "none"))) childRawT = .deny := by decide +kernel
+example : runT rootRawT (withHdr childRawT (·.drop "typ")) = .deny := by decide +kernel
+example : runT rootRawT (withHdr childRawT (·.set "typ" (.str "aat-pop+jwt"))) = .deny := by decide +kernel
+example : runT rootRawT childRawT (withPoPHdr (·.set "typ" (.str "aat+jwt"))) = .deny := by decide +kernel
+example : runT rootRawT childRawT (withPoPHdr (·.set "alg" (.str "EdDSA"))) = .deny := by decide +kernel
+example : runT (withHdr rootRawT (·.set "crit" (.arr [.str "urn:example:unknown"]))) childRawT = .deny := by
+  decide +kernel
+example : runT rootRawT (withHdr childRawT (·.set "crit" (.arr []))) = .deny := by decide +kernel
+example : runT rootRawT childRawT (withPoPHdr (·.set "crit" (.str "x"))) = .deny := by decide +kernel
+example : runT (withHdr rootRawT (fun h => match h with
+    | .obj kvs => .obj (kvs ++ [("typ", .str "x")]) | v => v)) childRawT = .deny := by decide +kernel
+-- другие параметры заголовка игнорируются (§3.5)
+example : runT (withHdr rootRawT (·.set "kid" (.str "k1"))) childRawT = .allow := by decide +kernel
 -- 3d: par_hash у корня, даже не строка
 example : runT (withRoot (·.set "par_hash" (.null))) childRawT = .deny := by decide +kernel
 

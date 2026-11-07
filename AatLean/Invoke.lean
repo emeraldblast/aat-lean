@@ -7,9 +7,8 @@ import AatLean.Verify
 (шаг 7i) — «outside the inputs of this algorithm» (§8), поэтому оно в обёртке
 `invokeWithState`, которая возвращает вердикт и новое состояние.
 
-Вне модели (байтовый уровень, допущение 7): шаг 7a (`alg`/`typ`/`crit` PoP)
-и допустимость чисел в `hta` (допущение 6). Разбор PoP JWT (7b–7c) —
-`Parse.lean`.
+Вне модели: допустимость чисел в `hta` (допущение 6). Заголовок PoP (7a) и
+разбор PoP JWT (7b–7c) — `Parse.lean`.
 -/
 
 namespace AAT

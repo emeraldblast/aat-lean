@@ -252,6 +252,26 @@ SUITES = {
             "4b5 (redundant by T7″)": (
                 "  guard (check4b5 isRoot t)                                          -- 4b5\n",
                 "  guard true\n"),
+            "2a: token size not checked": (
+                "  raw.all (fun t => decide (t.size ≤ P.maxTokenSize)) &&\n", ""),
+            "2b: chain size not checked": (
+                "decide ((raw.map (·.size)).sum ≤ P.maxChainSize)", "true"),
+            "3a/4a: chain headers not checked": (
+                '  raw.all (fun t => headerOk "aat+jwt" t.header) &&                  -- 3a, 4a\n', ""),
+            "7a: PoP header not checked": (
+                '  headerOk "aat-pop+jwt" rp.header                                   -- 7a', "  true"),
+            "3a/4a/7a: alg not checked": (
+                '  (h.field "alg" >>= JVal.asStr) == some "Ed25519" &&\n', ""),
+            "3a/4a/7a: typ not checked": (
+                '  (h.field "typ" >>= JVal.asStr) == some typ &&\n', ""),
+            "crit: unknown parameter accepted": (
+                "       | some s => critUnderstood.contains s\n", "       | some _ => true\n"),
+            "crit: empty array accepted": (
+                "     !xs.isEmpty && xs.all", "     xs.all"),
+            "crit: non-array accepted": (
+                "       | none => false)\n   | some _ => false)", "       | none => false)\n   | some _ => true)"),
+            "header: duplicate names accepted": (
+                "  h.noDup &&\n", ""),
             "7c: PoP iat optional": (
                 '  let iat ← p.field "iat" >>= JVal.asInt                             -- 7c',
                 '  let iat := (p.field "iat" >>= JVal.asInt).getD 50'),

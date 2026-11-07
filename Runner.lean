@@ -103,7 +103,8 @@ def rawToken (j : Json) : Except String RawToken := do
     if let some names := payload.field "authorization_details" >>= aatTools then
       for n in names do
         if (maps.lookup n).isNone then throw s!"decoder gave no constraint map for tool {n}"
-  pure { payload, thumb, maps, selfHash := ← str j "selfHash", sigBy := ← strs (← j.getObjVal? "sigBy") }
+  pure { header := ← jval (← j.getObjVal? "header"), size := ← nat j "size", payload, thumb, maps,
+         selfHash := ← str j "selfHash", sigBy := ← strs (← j.getObjVal? "sigBy") }
 
 def optStr (j : Json) (k : String) : Except String (Option String) :=
   match j.getObjVal? k with
@@ -119,7 +120,8 @@ def argsOf (j : Json) : Except String Args := do
 def runOne (j : Json) : Except String (Decision × List String × String) := do
   let p ← j.getObjVal? "params"
   let P : Params := ⟨← int p "now", ← int p "maxIatSkew", ← int p "maxTokenLifetime",
-                     ← nat p "maxDelegationDepth", ← nat p "maxConstraintDepth"⟩
+                     ← nat p "maxDelegationDepth", ← nat p "maxConstraintDepth",
+                     ← nat p "maxTokenSize", ← nat p "maxChainSize"⟩
   let e ← j.getObjVal? "endpoint"
   let E : Endpoint := ⟨← str e "audience", ← int e "popWindow",
     ← (← e.getObjVal? "requireChainAud").getBool?, ← (← e.getObjVal? "requirePopAud").getBool?,
@@ -138,10 +140,11 @@ def runOne (j : Json) : Except String (Decision × List String × String) := do
   if popPayload.noDup && (match popPayload.field "hta" with | some (.obj _) => true | _ => false) &&
       hta.isNone then
     throw "decoder gave no hta for an hta object"
-  let rp : RawPoP := { payload := popPayload, sigBy := ← strs (← q.getObjVal? "sigBy"), hta }
+  let rp : RawPoP := { header := ← jval (← q.getObjVal? "header"), payload := popPayload,
+                       sigBy := ← strs (← q.getObjVal? "sigBy"), hta }
   let seen ← strs (← j.getObjVal? "seen")
   -- диагностика: где остановился разбор (для отчёта, не для вердикта)
-  let stage := match parseChain chain, parsePoP rp with
+  let stage := if !framesOk P chain rp then "frames" else match parseChain chain, parsePoP rp with
     | none, _ => "parse-chain"
     | _, none => "parse-pop"
     | _, _ => "parsed"

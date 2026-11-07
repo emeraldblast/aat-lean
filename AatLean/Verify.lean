@@ -8,9 +8,9 @@ import AatLean.Chain
 цепочка; для `authorize` — ещё вызов. Состояние σ (nonce, PoP `jti`), PoP JWT
 и `aud` — позже (Т8, Т9).
 
-Смоделированные шаги: 1, 2c, 3b–3n, 4b–4q (кроме 4a), 5, 6b. Разбор claims
-(3b, 3j, 3l, 3m, 4b1–4b5, 4n: типы, наличие, форма) — `Parse.lean`; здесь —
-проверки над разобранными звеньями.
+Смоделированные шаги: 1, 2c, 3b–3n, 4b–4q, 5, 6b. Размеры и заголовки
+(2a, 2b, 3a, 4a, 7a) и разбор claims (3b, 3j, 3l, 3m, 4b1–4b5, 4n: типы,
+наличие, форма) — `Parse.lean`; здесь — проверки над разобранными звеньями.
 -/
 
 namespace AAT
@@ -22,6 +22,9 @@ structure Params where
   maxTokenLifetime   : Int
   maxDelegationDepth : Nat
   maxConstraintDepth : Nat
+  /-- `MAX_TOKEN_SIZE`, `MAX_CHAIN_SIZE` (§4.3, шаги 2a, 2b) — байты. -/
+  maxTokenSize       : Nat
+  maxChainSize       : Nat
 deriving Repr
 
 /-- Доверенный якорь: издатель и ключ (отпечаток), §8 Inputs. -/
@@ -461,7 +464,7 @@ theorem t7_3c_redundant (P : Params) (anchors : List Anchor) (c : List Link) :
 
 /-! ## Ловушки (ядро, `decide +kernel`) -/
 
-def PT : Params := ⟨50, 30, 1000, 8, 32⟩
+def PT : Params := ⟨50, 30, 1000, 8, 32, 1000, 1500⟩
 def anchorsT : List Anchor := [⟨"root-key", "anchor-key"⟩]
 
 /-- Заполняет поля §3.2 согласованно: глубина = позиция, `par_hash` — хэш

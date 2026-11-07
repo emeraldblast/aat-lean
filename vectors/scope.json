@@ -1,25 +1,10 @@
 {
  "_comment": "Vectors outside the model's scope, each with its stated assumption. vectors/run.py and conformance/check.py fail if the decoder's scope differs; regenerate with `python3 -I vectors/run.py --update-scope` only on a deliberate change.",
  "out": {
-  "J.7.1": "expected step 7a not modeled",
-  "J.7.2": "expected step 7a not modeled",
-  "J.7.3": "expected step 3a not modeled",
-  "J.7.4": "expected step 3a not modeled",
-  "J.7.5": "expected step 3a not modeled",
-  "J.7.6": "expected step 3a not modeled",
-  "J.7.7": "expected step 4a not modeled",
-  "J.7.8": "expected step 4a not modeled",
-  "J.7.9": "expected step 4a not modeled",
-  "J.7.10": "expected step 7a not modeled",
-  "J.7.11": "expected step 7a not modeled",
-  "J.7.15": "expected step 3a not modeled",
   "J.8.7": "precondition: inadmissible number (assumption 6)",
   "J.8.9": "precondition: inadmissible number (assumption 6)",
   "J.8.10": "precondition: inadmissible number (assumption 6)",
   "J.8.14": "precondition: inadmissible number (assumption 6)",
-  "J.14.b": "expected step 3a not modeled",
-  "J.20.17": "precondition: inadmissible number (assumption 6)",
-  "J.23.2": "expected step 2a not modeled",
-  "J.23.3": "expected step 2b not modeled"
+  "J.20.17": "precondition: inadmissible number (assumption 6)"
  }
 }

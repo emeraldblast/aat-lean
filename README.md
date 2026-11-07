@@ -45,20 +45,21 @@ and of the notes to §8. T7′ is the converse direction, not stated there; T7�
 
 `python3 -I vectors/run.py` decodes the suite (`vectors/upstream`, byte-identical
 to tenuo-ai/tenuo at `99fb009`), checks Ed25519 signatures with OpenSSL, and runs
-`invokeTokens` (`lake exe aat-run`): the model reads each signed payload as
-written — a JSON tree with repeated member names and number literals — parses
-the claims itself (steps 3b–3m, 4b–4n, 7b–7c: duplicate names, NumericDate and
-integer claims, `jti`, `cnf.jwk`, `authorization_details`), and then runs the
+`invokeTokens` (`lake exe aat-run`): the model checks token and chain sizes
+and every JWS header (steps 2a, 2b, 3a, 4a, 7a: `alg`, `typ`, `crit`), reads
+each signed payload as written — a JSON tree with repeated member names and
+number literals — parses the claims itself (steps 3b–3m, 4b–4n, 7b–7c:
+duplicate names, NumericDate and integer claims, `jti`, `cnf.jwk`,
+`authorization_details`), and then runs the
 **same `invokeWithState` function the theorems are about**. Result
 ([vectors/REPORT.md](vectors/REPORT.md)):
 
-- 209 of 229 vectors are in the model's scope; **209 of 209 agree**, including
-  all 54 PERMIT vectors; the PoP replay state matches on 3 of 3. Each of the 32
-  vectors the parser added is denied at parsing, and each of the other 177
-  parses.
-- The remaining 20 are header and size checks (`alg`/`typ`/`crit`, 2a/2b: 15)
-  and inadmissible numbers (5), left to stated assumptions; the list is pinned
-  in `vectors/scope.json`.
+- 224 of 229 vectors are in the model's scope; **224 of 224 agree**, including
+  all 54 PERMIT vectors; the PoP replay state matches on 3 of 3. Each of the 15
+  header and size vectors is denied by those checks, each of the 32 parsing
+  vectors at parsing, and each of the other 177 passes both.
+- The remaining 5 test inadmissible numbers (§3.4), left to assumption 5; the
+  list is pinned in `vectors/scope.json`.
 
 ## Differential conformance testing
 
@@ -100,7 +101,9 @@ compares every verdict with the Lean model. The report groups disagreements by
 3. The recipient executes exactly the bytes that were verified.
 4. A revocation snapshot is fresher than Δ (T5 only).
 5. All values are compared by JCS and every number is admissible (§3.4).
-6. Headers (`alg`, `typ`, `crit`) and size limits are out of scope.
+6. The enforcement point allows only `alg` `Ed25519`, understands no `crit`
+   parameter, and rejects a JWS header with a repeated member name (RFC 7515
+   §4 permits rejecting).
 7. The enforcement point accepts only Ed25519 keys (as the vector suite does):
    `cnf.jwk` "encodes a public key" when `kty` is `OKP`, `crv` is `Ed25519`,
    `x` is 43 base64url characters and there is no `d` (steps 3l, 4b2).
@@ -108,7 +111,7 @@ compares every verdict with the Lean model. The report groups disagreements by
 ## Mutation test
 
 `python3 review/mutate.py` mutates each check of the verifier and confirms that
-some kernel-checked `example` fails. 119 mutations are caught. Exactly five
+some kernel-checked `example` fails. 129 mutations are caught. Exactly five
 survive — steps 3c, 4e, 4f, 5 and 4b5 — which is what T7, T7′ and T7″ predict:
 no input can distinguish them.
 

@@ -36,7 +36,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import ed25519  # noqa: E402
 
 MODELED_STEPS = {
-    "1", "2c",
+    "1", "2a", "2b", "2c", "3a", "4a", "7a",
     "3b", "3c", "3d", "3e", "3f", "3g", "3h", "3i", "3j", "3k", "3l", "3m",
     "4b", "4b1", "4b2", "4b3", "4b4", "4b5", "4n", "4c", "4d", "4e", "4f", "4g", "4h", "4i", "4j", "4k", "4l", "4m",
     "3n", "4o",
@@ -139,6 +139,14 @@ def jws(token):
     if not isinstance(payload, _Obj):
         raise OutOfScope("precondition: JWS payload is not a JSON object")
     return payload, (parts[0] + "." + parts[1]).encode(), ed25519.b64u_decode(parts[2])
+
+
+def jws_header(token):
+    """The JWS Protected Header as written (a tree, like the payload)."""
+    h = tree(ed25519.b64u_decode(token["compact"].split(".")[0]).decode("utf-8"))
+    if not isinstance(h, _Obj):
+        raise OutOfScope("precondition: JWS header is not a JSON object")
+    return h
 
 
 def cnf_jwk(p):
@@ -341,6 +349,8 @@ def link(token, candidates):
     jwk = cnf_jwk(p)
     keys = candidates + ([jwk] if jwk else [])
     return {
+        "header": enc(jws_header(token)),
+        "size": len(token["compact"].encode()),
         "payload": enc(p),
         "thumb": thumb(jwk),
         "maps": maps(p),
@@ -356,7 +366,8 @@ def pop_of(v, candidates, args_pairs):
     p, msg, sig = jws(pop)
     hta = field(p, "hta")
     hta = [[k, value(plain(x))] for k, x in hta] if isinstance(hta, _Obj) and no_dup(p) else None
-    return {"payload": enc(p), "hta": hta, "sigBy": signed_by(candidates, msg, sig)}
+    return {"header": enc(jws_header(pop)), "payload": enc(p), "hta": hta,
+            "sigBy": signed_by(candidates, msg, sig)}
 
 
 def decode(suite):
@@ -394,7 +405,9 @@ def decode(suite):
                 "params": {"now": now, "maxIatSkew": params["max_iat_skew"],
                            "maxTokenLifetime": params["max_token_lifetime"],
                            "maxDelegationDepth": params["max_delegation_depth"],
-                           "maxConstraintDepth": params["max_constraint_depth"]},
+                           "maxConstraintDepth": params["max_constraint_depth"],
+                           "maxTokenSize": params["max_token_size"],
+                           "maxChainSize": params["max_chain_size"]},
                 "anchors": anchors,
                 "chain": chain,
                 "call": {"tool": v["tool"], "args": [[k, value(x)] for k, x in args]},
