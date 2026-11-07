@@ -1,6 +1,11 @@
 """Differential conformance check of an AAT-02 verifier against the proved Lean model.
 
     python3 -I conformance/check.py --impl "COMMAND" [--seed 1] [--count 300] [--out report.md]
+                                    [--json summary.json] [--shrink 3]
+
+Exit status 0 only when every verdict agrees, every vector got a model verdict
+(no coverage loss) and the implementation exited cleanly. Disagreements on which
+the model is the reference are shrunk to minimal vectors (conformance/shrink.py).
 
 Inputs: the author's 229 vectors plus COUNT generated chains (conformance/generate.py).
 Oracle: the Lean model (`lake exe aat-run`) — the same function T1–T9 are proved
@@ -14,15 +19,20 @@ and writes one JSON line per vector on stdout:
 """
 import argparse
 import collections
+import hashlib
+import itertools
 import json
 import pathlib
 import subprocess
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))  # shrink, mint, check under -I
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAKE = pathlib.Path.home() / ".elan/bin/lake"
 OUT = ROOT / "conformance/out"
 UPSTREAM = ROOT / "vectors/upstream/aat-jws-vectors.json"
+SCOPE = ROOT / "vectors/scope.json"
 
 
 def run(cmd, **kw):
@@ -37,9 +47,15 @@ def oracle(suite_path, tag):
     verdicts = {}
     for line in res.stdout.splitlines():
         parts = line.split("\t")
-        if len(parts) >= 2 and parts[1] in ("PERMIT", "DENY"):
+        if len(parts) >= 2:
             verdicts[parts[0]] = parts[1]
-    return verdicts, {r["id"]: r for r in json.load(open(inp))}
+    recs = {r["id"]: r for r in json.load(open(inp))}
+    # every in-scope vector must get a verdict; anything else is a coverage loss
+    lost = [f"{i}: {r['reason']}" for i, r in recs.items() if r["scope"] == "error"]
+    lost += [f"{i}: model answered {verdicts.get(i)!r}" for i, r in recs.items()
+             if r["scope"] == "in" and verdicts.get(i) not in ("PERMIT", "DENY")]
+    verdicts = {i: v for i, v in verdicts.items() if v in ("PERMIT", "DENY") and recs[i]["scope"] == "in"}
+    return verdicts, recs, lost
 
 
 def run_impl(cmd, suite, vectors):
@@ -56,12 +72,37 @@ def run_impl(cmd, suite, vectors):
     return got, res.returncode, res.stderr[-2000:]
 
 
+_tags = itertools.count()
+
+
+def judge(cmd):
+    """For shrinking: (model verdict, implementation verdict) for each vector."""
+    def f(suite, vectors):
+        path = OUT / "shrink-suite.json"
+        doc = {k: suite[k] for k in suite if k != "vectors"}
+        doc["vectors"] = vectors
+        path.write_text(json.dumps(doc, ensure_ascii=False))
+        model, _, _ = oracle(path, f"shrink-{next(_tags)}")
+        impl, _, _ = run_impl(cmd, suite, vectors)
+        return {v["id"]: (model.get(v["id"]), impl.get(v["id"], {}).get("verdict", "NO ANSWER")) for v in vectors}
+    return f
+
+
+def git_head():
+    try:
+        return run(["git", "rev-parse", "--short", "HEAD"]).stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--impl", required=True, help="command implementing the JSON-lines protocol")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--count", type=int, default=300)
     ap.add_argument("--out", default=str(OUT / "report.md"))
+    ap.add_argument("--json", help="also write a machine-readable summary here")
+    ap.add_argument("--shrink", type=int, default=3, help="shrink up to N disagreements (0: off)")
     a = ap.parse_args()
     OUT.mkdir(exist_ok=True)
     run([str(LAKE), "build", "aat-run"])
@@ -71,8 +112,17 @@ def main():
     run([sys.executable, "-I", str(ROOT / "conformance/generate.py"), str(a.seed), str(a.count), str(gen_path)])
     gen = json.load(open(gen_path))
 
-    o_up, rec_up = oracle(UPSTREAM, "upstream")
-    o_gen, _ = oracle(gen_path, f"gen-{a.seed}")
+    o_up, rec_up, lost_up = oracle(UPSTREAM, "upstream")
+    o_gen, rec_gen, lost_gen = oracle(gen_path, f"gen-{a.seed}")
+    # coverage: the author vectors outside the model are exactly the pinned ones,
+    # and every generated vector is decided by the model
+    pinned = json.load(open(SCOPE))["out"]
+    lost = lost_up + lost_gen
+    lost += [f"{i}: outside the model but not pinned in vectors/scope.json ({r['reason']})"
+             for i, r in rec_up.items() if r["scope"] == "out" and i not in pinned]
+    lost += [f"{i}: pinned as out of scope but now in scope" for i in pinned if rec_up.get(i, {}).get("scope") == "in"]
+    lost += [f"{i}: generated vector outside the model ({r.get('reason')})"
+             for i, r in rec_gen.items() if r["scope"] == "out"]
 
     # reference verdict: Lean model where in scope; the author's verdict for the rest of the author's suite
     ref, source, meta = {}, {}, {}
@@ -99,10 +149,26 @@ def main():
     too_lax = [r for r in dis if r[3] == "DENY" and r[5] == "PERMIT"]
     too_strict = [r for r in dis if r[3] == "PERMIT" and r[5] == "DENY"]
 
+    # minimal reproducers for disagreements the model decides, dangerous ones first
+    import shrink as shr
+    shrunk = []
+    vec = {v["id"]: (up, v) for v in up["vectors"]}
+    vec.update({v["id"]: (gen, v) for v in gen["vectors"]})
+    for r in sorted((r for r in dis if r[4] == "model"), key=lambda r: (r[3] != "DENY", r[0]))[:a.shrink]:
+        suite, v = vec[r[0]]
+        small, target, steps = shr.shrink(suite, v, judge(a.impl))
+        path = OUT / f"min-{r[0]}.json"
+        doc = {k: suite[k] for k in suite if k != "vectors"}
+        doc["vectors"] = [small]
+        path.write_text(json.dumps(doc, indent=1, ensure_ascii=False))
+        shrunk.append((r[0], target, shr.size(v), shr.size(small), len(small["chain"]), steps, path))
+
+    suite_sha = hashlib.sha256(UPSTREAM.read_bytes()).hexdigest()
     L = [
         "# Отчёт о проверке соответствия AAT-02",
         "",
         f"Реализация: `{a.impl}`",
+        f"Модель: коммит `{git_head()}`; набор векторов SHA-256 `{suite_sha[:16]}…`.",
         f"Входы: {len(up['vectors'])} авторских векторов + {sum(1 for r in rows if r[1] == 'generated')} "
         f"сгенерированных цепочек (seed {a.seed}).",
         "Эталон: Lean-модель с доказанными Т1–Т9 (для авторских векторов вне зоны модели — вердикт автора).",
@@ -128,17 +194,41 @@ def main():
             L.append(f"| {r[0]} | {r[1]} | {r[2]} | {r[3]} ({r[4]}) | {r[5]} | {r[6]} |")
     else:
         L += ["Расхождений нет."]
+    if shrunk:
+        L += ["", "## Минимальные воспроизводимые случаи", "",
+              "| Вектор | Модель | Реализация | Звеньев | Байт: было → стало | Файл |", "|---|---|---|---|---|---|"]
+        for i, t, b0, b1, nl, steps, path in shrunk:
+            L.append(f"| {i} | {t[0]} | {t[1]} | {nl} | {b0} → {b1} | `{path.relative_to(ROOT)}` |")
+        L += ["", "Каждый файл — набор в схеме авторских векторов из одного вектора; "
+              "`python3 -I conformance/check.py` его не читает, но любой декодер набора — да."]
     L += ["", "## Как воспроизвести", "",
           f"`python3 -I conformance/check.py --impl \"{a.impl}\" --seed {a.seed} --count {a.count}`"]
+    if lost:
+        L += ["", f"## Потеря покрытия: {len(lost)}", "",
+              "Проверка не пройдена: эти векторы не получили вердикта модели.", ""]
+        L += [f"- {x}" for x in lost[:60]]
     if rc1 or rc2:
         L += ["", f"**Реализация завершилась с ошибкой** (код {rc1 or rc2}): проверка не пройдена. "
               "Последние строки stderr:", "", "```", err1 if rc1 else err2, "```"]
     pathlib.Path(a.out).write_text("\n".join(L) + "\n", encoding="utf-8")
+    ok = not (dis or rc1 or rc2 or lost)
+    if a.json:
+        pathlib.Path(a.json).write_text(json.dumps({
+            "ok": ok, "impl": a.impl, "seed": a.seed, "count": a.count, "model_commit": git_head(),
+            "suite_sha256": suite_sha, "checked": len(rows), "agree": len(rows) - len(dis),
+            "dangerous": [r[0] for r in too_lax], "spurious_denials": [r[0] for r in too_strict],
+            "no_answer": [r[0] for r in dis if r[5] not in ("PERMIT", "DENY")],
+            "coverage_loss": lost, "impl_exit": rc1 or rc2,
+            "minimal": [{"id": i, "model": t[0], "impl": t[1], "links": nl, "file": str(path.relative_to(ROOT)),
+                         "steps": steps} for i, t, b0, b1, nl, steps, path in shrunk],
+        }, indent=1, ensure_ascii=False))
     print("\n".join(L[:17]))
+    if lost:
+        print(f"\ncoverage loss: {len(lost)} vector(s) without a model verdict: check failed")
     if rc1 or rc2:
         print(f"\nimplementation exited with code {rc1 or rc2}: check failed")
     print(f"\nreport: {a.out}")
-    return 1 if dis or rc1 or rc2 else 0
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

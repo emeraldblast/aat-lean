@@ -22,6 +22,7 @@ Usage:
     python3 -I vectors/decode.py vectors/upstream/aat-jws-vectors.json vectors/out/model-input.json
 """
 import base64
+import concurrent.futures
 import hashlib
 import json
 import pathlib
@@ -90,6 +91,17 @@ def jws(token):
     if not isinstance(payload, dict):
         raise OutOfScope("precondition: JWS payload is not a JSON object")
     return payload, (parts[0] + "." + parts[1]).encode(), ed25519.b64u_decode(parts[2])
+
+
+_POOL = concurrent.futures.ThreadPoolExecutor(16)
+
+
+def signed_by(keys, msg, sig):
+    """Thumbprint URIs of the OKP keys under which `sig` verifies over `msg`.
+    Each check is an independent OpenSSL process; they run in parallel."""
+    keys = [k for k in keys if k.get("kty") == "OKP"]
+    ok = _POOL.map(lambda k: ed25519.verify(k["x"], msg, sig), keys)
+    return sorted({thumbprint_uri(k) for k, good in zip(keys, ok) if good})
 
 
 def admissible(x):
@@ -249,6 +261,8 @@ def thumbprint_uri(jwk):
 
 
 def intclaim(p, k):
+    if k not in p:
+        raise OutOfScope(f"precondition: {k} missing (parsing, 3b/4b)")
     x = p[k]
     if isinstance(x, bool) or not isinstance(x, int):
         raise OutOfScope(f"precondition: {k} is not an integer (parsing, 3b/4b)")
@@ -266,8 +280,7 @@ def link(token, candidates):
     if not isinstance(p.get("jti"), str):
         raise OutOfScope("precondition: jti missing (3j/4b1)")
     jwk = p["cnf"]["jwk"]
-    sig_by = sorted({thumbprint_uri(k) for k in candidates + [jwk]
-                     if k.get("kty") == "OKP" and ed25519.verify(k["x"], msg, sig)})
+    sig_by = signed_by(candidates + [jwk], msg, sig)
     ph = p.get("par_hash")
     aud = p.get("aud", None)
     if "aud" not in p:
@@ -310,8 +323,7 @@ def pop_of(v, candidates, args_pairs):
     hta = [[k, value(x)] for k, x in hta.items()] if isinstance(hta, dict) else None
     aud = p["aat_aud"] if isinstance(p.get("aat_aud"), str) else ("" if "aat_aud" in p else None)
     nonce = p["nonce"] if isinstance(p.get("nonce"), str) else ("" if "nonce" in p else None)
-    sig_by = sorted({thumbprint_uri(k) for k in candidates
-                     if k.get("kty") == "OKP" and ed25519.verify(k["x"], msg, sig)})
+    sig_by = signed_by(candidates, msg, sig)
     return {"jti": strfield(p, "jti"), "aatId": strfield(p, "aat_id"), "aatHash": strfield(p, "aat_hash"),
             "aatTool": strfield(p, "aat_tool"), "iat": p["iat"], "hta": hta, "aatAud": aud,
             "nonce": nonce, "sigBy": sig_by}
@@ -361,8 +373,9 @@ def decode(suite):
             rec["scope"] = "out"
             rec["reason"] = str(e)
         except (KeyError, TypeError, ValueError, AttributeError) as e:
-            rec["scope"] = "out"
-            rec["reason"] = f"undecodable: {type(e).__name__}"
+            # not a stated assumption: a coverage loss, reported as an error
+            rec["scope"] = "error"
+            rec["reason"] = f"undecodable: {type(e).__name__}: {e}"
         out.append(rec)
     return out
 
@@ -377,13 +390,17 @@ def main():
           f"({sum(r['expected'] == 'PERMIT' for r in inn)} PERMIT, "
           f"{sum(r['expected'] == 'DENY' for r in inn)} DENY)")
     reasons = {}
+    errs = [r for r in recs if r["scope"] == "error"]
+    for r in errs:
+        print(f"  ERROR {r['id']}: {r['reason']}")
     for r in recs:
         if r["scope"] == "out":
             key = r["reason"].split(":")[0] if r["reason"].startswith("undecodable") else r["reason"]
             reasons[key] = reasons.get(key, 0) + 1
     for k, n in sorted(reasons.items(), key=lambda kv: -kv[1])[:15]:
         print(f"  out: {n:3d}  {k}")
+    return 1 if errs else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

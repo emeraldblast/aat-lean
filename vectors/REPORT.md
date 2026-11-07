@@ -72,7 +72,7 @@
 | precondition: PoP iat is not a NumericDate (parsing, 7c) | 1 |
 | precondition: del_depth is not an integer (parsing, 3b/4b) | 1 |
 | precondition: exp is not an integer (parsing, 3b/4b) | 1 |
-| undecodable: KeyError | 1 |
+| precondition: del_max_depth missing (parsing, 3b/4b) | 1 |
 | expected step 3j not modeled | 1 |
 | expected step 2a not modeled | 1 |
 | expected step 2b not modeled | 1 |

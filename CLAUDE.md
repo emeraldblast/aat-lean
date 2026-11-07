@@ -28,6 +28,9 @@ After changing any checker (`check`, `subsumes`, `permitsArgs`, `narrowsMapB`,
 and the vectors. Add a mutation to `review/mutate.py` for every new check.
 `EXPECTED_SURVIVORS` (3c, 4e, 4f, step 5) must survive: T7/T7′ prove they are
 redundant. Copy `vectors/out/report.md` to `vectors/REPORT.md` when it changes.
+`vectors/scope.json` pins which author vectors are outside the model; a change of
+scope fails `vectors/run.py` until accepted with `--update-scope` — only for a
+deliberate change, with a stated assumption for every out-of-scope vector.
 
 ## Rules for proofs
 

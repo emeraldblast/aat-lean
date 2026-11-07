@@ -65,6 +65,18 @@ all nine constraint types, one mutation per vector against a §8 step), and
 compares every verdict with the Lean model. The report groups disagreements by
 §8 step and separates the dangerous ones (model DENY, implementation PERMIT).
 
+- **Minimal reproducers.** Each disagreement the model decides is shrunk
+  (`conformance/shrink.py`): links, tools, constraint entries, list members and
+  call arguments are removed, constraints replaced by `wildcard`, and the chain
+  re-signed with the original signers, for as long as the same disagreement
+  survives. The result is a one-vector suite in the author's schema.
+- **No silent coverage loss.** The check fails if any vector does not get a
+  model verdict, if the implementation exits with an error, or if the set of
+  author vectors outside the model differs from `vectors/scope.json`.
+- **CI.** One command; exit status 0 only on full agreement. `--json` writes a
+  machine-readable summary; the report records the model commit, the suite's
+  SHA-256 and the seed, so every run is reproducible.
+
 - `conformance/examples/model_impl.py` answers with the model itself: 529 of 529
   agree, which checks the harness.
 - `conformance/examples/naive_impl.py` is a verifier with three deliberate bugs
