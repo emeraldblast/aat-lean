@@ -200,6 +200,60 @@ SUITES = {
                                               "  match Decision.allow with\n  | .allow => invoke"),
         },
     ),
+    "AatLean/Parse.lean": (
+        [("/-! ## Перенос теорем", "/-! ## Ловушки")],
+        {
+            "3b/4b: duplicate names ignored": (
+                "  guard p.noDup                                                      -- 3b, 4b\n",
+                "  guard true\n"),
+            "7b: PoP duplicate names ignored": (
+                "  guard p.noDup                                                      -- 7b\n",
+                "  guard true\n"),
+            "noDup: nested objects not checked": (
+                "  | .obj kvs => decide (kvs.map (·.1)).Nodup && JVal.noDupObj kvs",
+                "  | .obj kvs => decide (kvs.map (·.1)).Nodup"),
+            "noDup: top level not checked": (
+                "  | .obj kvs => decide (kvs.map (·.1)).Nodup && JVal.noDupObj kvs",
+                "  | .obj kvs => JVal.noDupObj kvs"),
+            "NumericDate: non-digits skipped": (
+                "if c.isDigit then digitsVal cs (some (acc.getD 0 * 10 + (c.toNat - '0'.toNat))) else none",
+                "if c.isDigit then digitsVal cs (some (acc.getD 0 * 10 + (c.toNat - '0'.toNat))) else digitsVal cs acc"),
+            "3c/4b4: negative integers accepted": (
+                "v.asInt.bind fun i => if 0 ≤ i then some i.toNat else none",
+                "v.asInt.bind fun i => some i.toNat"),
+            "3i: missing del_max_depth defaults": (
+                '  let dmd ← p.field "del_max_depth" >>= JVal.asNat',
+                '  let dmd := (p.field "del_max_depth" >>= JVal.asNat).getD 8'),
+            "3j/4b1: empty jti accepted": (
+                "v.asStr.bind fun s => if s.isEmpty then none else some s",
+                "v.asStr"),
+            "3l/4b2: jwk not checked": (
+                "  guard (jwkOk jwk)\n", "  guard true\n"),
+            "3l/4b2: private d accepted": (
+                ' &&\n  (j.field "d").isNone', ""),
+            "3l/4b2: kty not checked": (
+                '  (j.field "kty" >>= JVal.asStr) == some "OKP" &&\n', ""),
+            "3l/4b2: crv not checked": (
+                '  (j.field "crv" >>= JVal.asStr) == some "Ed25519" &&\n', ""),
+            "3l/4b2: x length not checked": (
+                "x.length == 43 && x.toList.all b64uChar", "x.toList.all b64uChar"),
+            "3l/4b2: x alphabet not checked": (
+                "x.length == 43 && x.toList.all b64uChar", "x.length == 43"),
+            "3m/4n: more than one AAT entry accepted": (
+                "    | [e] =>\n", "    | e :: _ =>\n"),
+            "3m/4n: entries of other types counted": (
+                'match xs.filter (fun e => (e.field "type" >>= JVal.asStr) == some "attenuating_agent_token") with',
+                "match xs with"),
+            "3m/4n: tools values not checked": (
+                "if kvs.all (fun (_, m) => m.isObj) then some (kvs.map (·.1)) else none",
+                "some (kvs.map (·.1))"),
+            "7c: hta need not be an object": (
+                "    | some (.obj _) => q.hta\n    | _ => none\n", "    | _ => q.hta\n"),
+            "7c: PoP iat optional": (
+                '  let iat ← p.field "iat" >>= JVal.asInt                             -- 7c',
+                '  let iat := (p.field "iat" >>= JVal.asInt).getD 50'),
+        },
+    ),
 }
 
 

@@ -5,8 +5,9 @@ import Lean.Data.Json
 # Прогон модели на векторах
 
 Читает `vectors/out/model-input.json` (вывод `vectors/decode.py`) и для каждого
-вектора в зоне модели печатает `id<TAB>PERMIT|DENY` — вердикт `authorize`,
-той самой функции, о которой доказаны Т1 и Т2. Ошибка разбора входа — `ERROR`.
+вектора в зоне модели печатает `id<TAB>PERMIT|DENY` — вердикт `invokeTokens`:
+разбор claims в Lean, затем `invokeWithState`, о которой доказаны Т1–Т9
+(`invokeTokens_allow`). Несогласованный вход декодера — `ERROR`.
 -/
 
 open Lean AAT
@@ -73,22 +74,36 @@ def str (j : Json) (k : String) : Except String String := do (← j.getObjVal? k
 def int (j : Json) (k : String) : Except String Int := do (← j.getObjVal? k).getInt?
 def nat (j : Json) (k : String) : Except String Nat := do (← j.getObjVal? k).getNat?
 
-def link (j : Json) : Except String Link := do
-  let tools ← (← (← j.getObjVal? "tools").getArr?).toList.mapM fun e => do
-    let (t, m) ← pair e
-    pure ((← t.getStr?), ← cmap m)
-  let parHash ← match j.getObjVal? "parHash" with
+partial def jval (j : Json) : Except String JVal := do
+  if let .ok kvs := j.getObjVal? "o" then
+    return .obj (← (← kvs.getArr?).toList.mapM fun e => do
+      let (k, v) ← pair e
+      pure ((← k.getStr?), ← jval v))
+  if let .ok xs := j.getObjVal? "a" then return .arr (← (← xs.getArr?).toList.mapM jval)
+  if let .ok n := j.getObjVal? "n" then return .num (← n.getStr?)
+  if let .ok s := j.getObjVal? "s" then return .str (← s.getStr?)
+  if let .ok b := j.getObjVal? "b" then return .bool (← b.getBool?)
+  if (j.getObjVal? "z").isOk then return .null
+  throw s!"bad JSON tree {j.compress}"
+
+def strs (j : Json) : Except String (List String) := do (← j.getArr?).toList.mapM (·.getStr?)
+
+/-- Токен как его видит модель. Если разбор доходит до карт ограничений, а у
+    декодера нет карты для инструмента — это ошибка декодера, не DENY. -/
+def rawToken (j : Json) : Except String RawToken := do
+  let payload ← jval (← j.getObjVal? "payload")
+  let thumb ← match j.getObjVal? "thumb" with
     | .ok .null => pure none
     | .ok v => pure (some (← v.getStr?))
     | .error _ => pure none
-  let aud ← match j.getObjVal? "aud" with
-    | .ok .null => pure none
-    | .ok v => pure (some (← (← v.getArr?).toList.mapM (·.getStr?)))
-    | .error _ => pure none
-  pure { issuer := ← str j "issuer", holder := ← str j "holder", tools, aud,
-         jti := ← str j "jti", delDepth := ← nat j "delDepth", delMaxDepth := ← nat j "delMaxDepth",
-         iat := ← int j "iat", exp := ← int j "exp", parHash, selfHash := ← str j "selfHash",
-         sigBy := ← (← (← j.getObjVal? "sigBy").getArr?).toList.mapM (·.getStr?) }
+  let maps ← (← (← j.getObjVal? "maps").getArr?).toList.mapM fun e => do
+    let (t, m) ← pair e
+    pure ((← t.getStr?), ← cmap m)
+  if payload.noDup then
+    if let some names := payload.field "authorization_details" >>= aatTools then
+      for n in names do
+        if (maps.lookup n).isNone then throw s!"decoder gave no constraint map for tool {n}"
+  pure { payload, thumb, maps, selfHash := ← str j "selfHash", sigBy := ← strs (← j.getObjVal? "sigBy") }
 
 def optStr (j : Json) (k : String) : Except String (Option String) :=
   match j.getObjVal? k with
@@ -101,7 +116,7 @@ def argsOf (j : Json) : Except String Args := do
     let (k, v) ← pair e
     pure ((← k.getStr?), ← value v)
 
-def runOne (j : Json) : Except String (Decision × List String) := do
+def runOne (j : Json) : Except String (Decision × List String × String) := do
   let p ← j.getObjVal? "params"
   let P : Params := ⟨← int p "now", ← int p "maxIatSkew", ← int p "maxTokenLifetime",
                      ← nat p "maxDelegationDepth", ← nat p "maxConstraintDepth"⟩
@@ -111,19 +126,27 @@ def runOne (j : Json) : Except String (Decision × List String) := do
     ← optStr e "nonce", ← (← e.getObjVal? "trackJti").getBool?⟩
   let anchors ← (← (← j.getObjVal? "anchors").getArr?).toList.mapM fun a => do
     pure ({ iss := ← str a "iss", key := ← str a "key" } : Anchor)
-  let chain ← (← (← j.getObjVal? "chain").getArr?).toList.mapM link
+  let chain ← (← (← j.getObjVal? "chain").getArr?).toList.mapM rawToken
   let call ← j.getObjVal? "call"
   let callV : Call := ⟨← str call "tool", ← argsOf (← call.getObjVal? "args")⟩
   let q ← j.getObjVal? "pop"
+  let popPayload ← jval (← q.getObjVal? "payload")
   let hta ← match q.getObjVal? "hta" with
     | .ok .null => pure none
     | .ok v => pure (some (← argsOf v))
     | .error _ => pure none
-  let pop : PoP := ⟨← str q "jti", ← str q "aatId", ← str q "aatHash", ← str q "aatTool",
-    ← int q "iat", hta, ← optStr q "aatAud", ← optStr q "nonce",
-    ← (← (← q.getObjVal? "sigBy").getArr?).toList.mapM (·.getStr?)⟩
-  let seen ← (← (← j.getObjVal? "seen").getArr?).toList.mapM (·.getStr?)
-  pure (invokeWithState P E anchors chain callV pop seen)
+  if popPayload.noDup && (match popPayload.field "hta" with | some (.obj _) => true | _ => false) &&
+      hta.isNone then
+    throw "decoder gave no hta for an hta object"
+  let rp : RawPoP := { payload := popPayload, sigBy := ← strs (← q.getObjVal? "sigBy"), hta }
+  let seen ← strs (← j.getObjVal? "seen")
+  -- диагностика: где остановился разбор (для отчёта, не для вердикта)
+  let stage := match parseChain chain, parsePoP rp with
+    | none, _ => "parse-chain"
+    | _, none => "parse-pop"
+    | _, _ => "parsed"
+  let (d, st) := invokeTokens P E anchors chain callV rp seen
+  pure (d, st, stage)
 
 def main (argv : List String) : IO UInt32 := do
   let path := argv.headD "vectors/out/model-input.json"
@@ -132,8 +155,8 @@ def main (argv : List String) : IO UInt32 := do
     let id := (r.getObjVal? "id" >>= (·.getStr?)).toOption.getD "?"
     if (r.getObjVal? "scope" >>= (·.getStr?)).toOption != some "in" then continue
     match r.getObjVal? "input" >>= runOne with
-    | .ok (d, st) =>
+    | .ok (d, st, stage) =>
       let v := match d with | .allow => "PERMIT" | .deny => "DENY"
-      IO.println s!"{id}\t{v}\t{",".intercalate st.reverse}"
+      IO.println s!"{id}\t{v}\t{",".intercalate st.reverse}\t{stage}"
     | .error e => IO.println s!"{id}\tERROR {e}\t"
   pure 0

@@ -5,12 +5,14 @@ decoder computes, for each token, the set of keys under which its Ed25519
 signature actually verifies (OpenSSL), and the SHA-256 of its JWS Signing
 Input; the model consumes those. Keys are identified by their JWK thumbprint
 URI (RFC 7638 / 9278). Each token is read from its `compact` serialization
-only. For each vector we extract, losslessly:
+only. For each vector we extract:
   - params (suite defaults overridden by the vector) and `now`,
   - trust anchors as (issuer, key thumbprint),
-  - per token: iss, holder = thumbprint URI of cnf.jwk, jti, iat, exp,
-    del_depth, del_max_depth, par_hash, own signing-input hash, signing keys,
-    and the constraint maps of the attenuating_agent_token entry,
+  - per token: the payload as written (a JSON tree that keeps repeated member
+    names and number literals; the Lean model parses claims itself, steps
+    3b-3m, 4b-4n), the thumbprint URI of cnf.jwk, the signing-input hash, the
+    signing keys, and the constraint maps of the attenuating_agent_token entry,
+  - the PoP payload as written, its signing keys and `hta` as arguments,
   - the invocation: tool and args.
 
 A vector is IN SCOPE when its expected verdict is decided by steps the model
@@ -35,8 +37,8 @@ import ed25519  # noqa: E402
 
 MODELED_STEPS = {
     "1", "2c",
-    "3b", "3c", "3d", "3e", "3f", "3g", "3h", "3i", "3k",
-    "4b", "4c", "4d", "4e", "4f", "4g", "4h", "4i", "4j", "4k", "4l", "4m",
+    "3b", "3c", "3d", "3e", "3f", "3g", "3h", "3i", "3j", "3k", "3l", "3m",
+    "4b", "4b1", "4b2", "4b3", "4b4", "4b5", "4n", "4c", "4d", "4e", "4f", "4g", "4h", "4i", "4j", "4k", "4l", "4m",
     "3n", "4o",
     "4p1", "4p2", "4p3", "4p4", "4q",
     "5", "6b", "6c",
@@ -46,17 +48,6 @@ MODELED_STEPS = {
 
 class OutOfScope(Exception):
     pass
-
-
-def _no_dups(pairs):
-    keys = [k for k, _ in pairs]
-    if len(keys) != len(set(keys)):
-        raise OutOfScope("precondition: duplicate JSON member names in claims (assumption 7)")
-    return dict(pairs)
-
-
-def loads(s):
-    return json.loads(s, parse_float=Decimal, parse_int=int, object_pairs_hook=_no_dups)
 
 
 class _Obj(list):
@@ -81,16 +72,79 @@ def load_args(s):
     return [(k, nested(v)) for k, v in top]
 
 
+class _Num(str):
+    """A JSON number as written (its literal)."""
+
+
+def _no_constant(c):
+    raise OutOfScope(f"precondition: {c} is not JSON (byte level)")
+
+
+def tree(text):
+    """JSON as written: objects keep repeated names (_Obj), numbers keep their literal (_Num)."""
+    return json.loads(text, object_pairs_hook=_Obj, parse_int=_Num, parse_float=_Num,
+                      parse_constant=_no_constant)
+
+
+def no_dup(x):
+    if isinstance(x, _Obj):
+        return len({k for k, _ in x}) == len(x) and all(no_dup(v) for _, v in x)
+    if isinstance(x, list):
+        return all(no_dup(e) for e in x)
+    return True
+
+
+def plain(x):
+    """Tree -> Python values (only used where the tree has no repeated names)."""
+    if isinstance(x, _Obj):
+        return {k: plain(v) for k, v in x}
+    if isinstance(x, list):
+        return [plain(e) for e in x]
+    if isinstance(x, _Num):
+        return Decimal(x) if any(c in x for c in ".eE") else int(x)
+    return x
+
+
+def enc(x):
+    """Tree -> the Lean `JVal` encoding read by Runner.lean."""
+    if isinstance(x, _Obj):
+        return {"o": [[k, enc(v)] for k, v in x]}
+    if isinstance(x, list):
+        return {"a": [enc(e) for e in x]}
+    if isinstance(x, _Num):
+        return {"n": str(x)}
+    if isinstance(x, bool):
+        return {"b": x}
+    if x is None:
+        return {"z": True}
+    return {"s": x}
+
+
+def field(x, k):
+    """Member `k` of an object tree (the first one; repeated names make the model deny)."""
+    if isinstance(x, _Obj):
+        for a, v in x:
+            if a == k:
+                return v
+    return None
+
+
 def jws(token):
-    """Payload, signing input and signature, all from the one compact
+    """Payload tree, signing input and signature, all from the one compact
     serialization: the other fields of the vector are not trusted to agree."""
     parts = token["compact"].split(".")
     if len(parts) != 3:
         raise OutOfScope("precondition: compact JWS is not three segments (byte level)")
-    payload = loads(ed25519.b64u_decode(parts[1]).decode("utf-8"))
-    if not isinstance(payload, dict):
+    payload = tree(ed25519.b64u_decode(parts[1]).decode("utf-8"))
+    if not isinstance(payload, _Obj):
         raise OutOfScope("precondition: JWS payload is not a JSON object")
     return payload, (parts[0] + "." + parts[1]).encode(), ed25519.b64u_decode(parts[2])
+
+
+def cnf_jwk(p):
+    """cnf.jwk as a dict, if it is an object."""
+    j = field(field(p, "cnf"), "jwk")
+    return plain(j) if isinstance(j, _Obj) else None
 
 
 _POOL = concurrent.futures.ThreadPoolExecutor(16)
@@ -99,7 +153,7 @@ _POOL = concurrent.futures.ThreadPoolExecutor(16)
 def signed_by(keys, msg, sig):
     """Thumbprint URIs of the OKP keys under which `sig` verifies over `msg`.
     Each check is an independent OpenSSL process; they run in parallel."""
-    keys = [k for k in keys if k.get("kty") == "OKP"]
+    keys = [k for k in keys if thumb(k) is not None]
     ok = _POOL.map(lambda k: ed25519.verify(k["x"], msg, sig), keys)
     return sorted({thumbprint_uri(k) for k, good in zip(keys, ok) if good})
 
@@ -253,63 +307,46 @@ def b64u(b):
 
 
 def thumbprint_uri(jwk):
-    if jwk.get("kty") != "OKP":
-        raise OutOfScope("non-OKP cnf.jwk")
     canon = json.dumps({"crv": jwk["crv"], "kty": jwk["kty"], "x": jwk["x"]},
                        separators=(",", ":"), sort_keys=True)
     return "urn:ietf:params:oauth:jwk-thumbprint:sha-256:" + b64u(hashlib.sha256(canon.encode()).digest())
 
 
-def intclaim(p, k):
-    if k not in p:
-        raise OutOfScope(f"precondition: {k} missing (parsing, 3b/4b)")
-    x = p[k]
-    if isinstance(x, bool) or not isinstance(x, int):
-        raise OutOfScope(f"precondition: {k} is not an integer (parsing, 3b/4b)")
-    return x
+def thumb(jwk):
+    """jwk_thumbprint_uri for an OKP key with string members (assumption 5);
+    for anything else None — the model rejects such a key (3l, 4b2) first."""
+    if not isinstance(jwk, dict) or jwk.get("kty") != "OKP" or \
+            not all(isinstance(jwk.get(k), str) for k in ("crv", "x")):
+        return None
+    return thumbprint_uri(jwk)
+
+
+def maps(p):
+    """Constraint maps of the single AAT entry, by tool name. Empty when the
+    payload repeats a name or the entry is malformed: the model denies those
+    itself (3b/4b, 3m/4n) before it reads any map."""
+    if not no_dup(p):
+        return []
+    ad = field(p, "authorization_details")
+    if not isinstance(ad, list) or isinstance(ad, _Obj):
+        return []
+    entries = [e for e in ad if field(e, "type") == "attenuating_agent_token"]
+    if len(entries) != 1 or not isinstance(field(entries[0], "tools"), _Obj):
+        return []
+    return [[t, cmap(plain(m))] for t, m in field(entries[0], "tools") if isinstance(m, _Obj)]
 
 
 def link(token, candidates):
     p, msg, sig = jws(token)
-    entries = [e for e in p.get("authorization_details", []) if e.get("type") == "attenuating_agent_token"]
-    if len(entries) != 1:
-        raise OutOfScope("not exactly one attenuating_agent_token entry")
-    tools = entries[0].get("tools")
-    if not isinstance(tools, dict):
-        raise OutOfScope("tools is not an object")
-    if not isinstance(p.get("jti"), str):
-        raise OutOfScope("precondition: jti missing (3j/4b1)")
-    jwk = p["cnf"]["jwk"]
-    sig_by = signed_by(candidates + [jwk], msg, sig)
-    ph = p.get("par_hash")
-    aud = p.get("aud", None)
-    if "aud" not in p:
-        aud = None
-    elif isinstance(aud, str):
-        aud = [aud]
-    elif isinstance(aud, list) and all(isinstance(a, str) for a in aud):
-        pass
-    else:
-        aud = []  # not a string or an array of strings: step 6c denies
+    jwk = cnf_jwk(p)
+    keys = candidates + ([jwk] if jwk else [])
     return {
-        "aud": aud,
-        "issuer": p["iss"],
-        "holder": thumbprint_uri(jwk),
-        "tools": [[t, cmap(m)] for t, m in tools.items()],
-        "jti": p["jti"],
-        "delDepth": intclaim(p, "del_depth"),
-        "delMaxDepth": intclaim(p, "del_max_depth"),
-        "iat": intclaim(p, "iat"),
-        "exp": intclaim(p, "exp"),
-        "parHash": ph,
+        "payload": enc(p),
+        "thumb": thumb(jwk),
+        "maps": maps(p),
         "selfHash": b64u(hashlib.sha256(msg).digest()),
-        "sigBy": sig_by,
+        "sigBy": signed_by(keys, msg, sig),
     }
-
-
-def strfield(p, k):
-    x = p.get(k)
-    return x if isinstance(x, str) else ""
 
 
 def pop_of(v, candidates, args_pairs):
@@ -317,16 +354,9 @@ def pop_of(v, candidates, args_pairs):
     if not pop:
         raise OutOfScope("no PoP JWT")
     p, msg, sig = jws(pop)
-    if not isinstance(p.get("iat"), int) or isinstance(p.get("iat"), bool):
-        raise OutOfScope("precondition: PoP iat is not a NumericDate (parsing, 7c)")
-    hta = p.get("hta")
-    hta = [[k, value(x)] for k, x in hta.items()] if isinstance(hta, dict) else None
-    aud = p["aat_aud"] if isinstance(p.get("aat_aud"), str) else ("" if "aat_aud" in p else None)
-    nonce = p["nonce"] if isinstance(p.get("nonce"), str) else ("" if "nonce" in p else None)
-    sig_by = signed_by(candidates, msg, sig)
-    return {"jti": strfield(p, "jti"), "aatId": strfield(p, "aat_id"), "aatHash": strfield(p, "aat_hash"),
-            "aatTool": strfield(p, "aat_tool"), "iat": p["iat"], "hta": hta, "aatAud": aud,
-            "nonce": nonce, "sigBy": sig_by}
+    hta = field(p, "hta")
+    hta = [[k, value(plain(x))] for k, x in hta] if isinstance(hta, _Obj) and no_dup(p) else None
+    return {"payload": enc(p), "hta": hta, "sigBy": signed_by(candidates, msg, sig)}
 
 
 def decode(suite):
@@ -346,7 +376,8 @@ def decode(suite):
             chain, cands = [], list(known)
             for t in v["chain"]:
                 l = link(t, cands)
-                cands = cands + [jws(t)[0]["cnf"]["jwk"]]
+                jwk = cnf_jwk(jws(t)[0])
+                cands = cands + ([jwk] if jwk else [])
                 chain.append(l)
             pol = v.get("policy") or {}
             rs = v.get("replay_state") or {}

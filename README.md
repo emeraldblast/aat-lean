@@ -42,14 +42,20 @@ and of the notes to §8. T7′ is the converse direction, not stated there.
 
 `python3 -I vectors/run.py` decodes the suite (`vectors/upstream`, byte-identical
 to tenuo-ai/tenuo at `99fb009`), checks Ed25519 signatures with OpenSSL, and runs
-the **same `invokeWithState` function the theorems are about**
-(`lake exe aat-run`). Result ([vectors/REPORT.md](vectors/REPORT.md)):
+`invokeTokens` (`lake exe aat-run`): the model reads each signed payload as
+written — a JSON tree with repeated member names and number literals — parses
+the claims itself (steps 3b–3m, 4b–4n, 7b–7c: duplicate names, NumericDate and
+integer claims, `jti`, `cnf.jwk`, `authorization_details`), and then runs the
+**same `invokeWithState` function the theorems are about**. Result
+([vectors/REPORT.md](vectors/REPORT.md)):
 
-- 177 of 229 vectors are in the model's scope; **177 of 177 agree**, including
-  all 54 PERMIT vectors; the PoP replay state matches on 3 of 3.
-- The remaining 52 are byte-level or parsing checks (`alg`/`typ`/`crit`,
-  `cnf.jwk` form, sizes, duplicate JSON members, inadmissible numbers) that the
-  model leaves to its stated assumptions.
+- 209 of 229 vectors are in the model's scope; **209 of 209 agree**, including
+  all 54 PERMIT vectors; the PoP replay state matches on 3 of 3. Each of the 32
+  vectors the parser added is denied at parsing, and each of the other 177
+  parses.
+- The remaining 20 are header and size checks (`alg`/`typ`/`crit`, 2a/2b: 15)
+  and inadmissible numbers (5), left to stated assumptions; the list is pinned
+  in `vectors/scope.json`.
 
 ## Differential conformance testing
 
@@ -91,12 +97,15 @@ compares every verdict with the Lean model. The report groups disagreements by
 3. The recipient executes exactly the bytes that were verified.
 4. A revocation snapshot is fresher than Δ (T5 only).
 5. All values are compared by JCS and every number is admissible (§3.4).
-6. Byte-level parsing is out of scope.
+6. Headers (`alg`, `typ`, `crit`) and size limits are out of scope.
+7. The enforcement point accepts only Ed25519 keys (as the vector suite does):
+   `cnf.jwk` "encodes a public key" when `kty` is `OKP`, `crv` is `Ed25519`,
+   `x` is 43 base64url characters and there is no `d` (steps 3l, 4b2).
 
 ## Mutation test
 
 `python3 review/mutate.py` mutates each check of the verifier and confirms that
-some kernel-checked `example` fails. 100 mutations are caught. Exactly four
+some kernel-checked `example` fails. 119 mutations are caught. Exactly four
 survive — steps 3c, 4e, 4f and 5 — which is what T7 and T7′ predict: no input
 can distinguish them.
 
@@ -109,6 +118,7 @@ can distinguish them.
 | `AatLean/Chain.lean` | Tokens, `Permits`, `Narrows`, step 4p, T1 core |
 | `AatLean/Verify.lean` | §8 steps 1–6b, T1–T4, T6, T7 |
 | `AatLean/Invoke.lean` | Steps 6c and 7 with state, T8, T9 |
+| `AatLean/Parse.lean` | Claims parsing (3b–3m, 4b–4n, 7b–7c) over JSON as written; `invokeTokens` |
 | `AatLean/Extension/Revocation.lean` | T5 |
 | `Runner.lean`, `vectors/` | Vector decoder, runner, report |
 | `conformance/` | Differential conformance testing of other verifiers |
