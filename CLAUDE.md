@@ -20,7 +20,7 @@ files: the repository is public (github.com/emeraldblast/aat-lean).
 ~/.elan/bin/lake build                 # all proofs (elan is not on PATH)
 python3 review/mutate.py               # mutation test, must report 0 surviving
 python3 -I vectors/run.py              # vectors: decode, run lake exe aat-run, compare
-python3 -I conformance/check.py --impl "python3 -I conformance/examples/model_impl.py"  # must be 0 disagreements
+python3 -I conformance/selftest.py     # harness: model agrees on all, buggy fixture caught
 ```
 
 After changing any checker (`check`, `subsumes`, `permitsArgs`, `narrowsMapB`,

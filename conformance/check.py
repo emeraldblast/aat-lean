@@ -12,10 +12,13 @@ Oracle: the Lean model (`lake exe aat-run`) — the same function T1–T9 are pr
 about. For author vectors outside the model's scope (byte-level checks), the
 author's expected verdict is the reference.
 
-Protocol: COMMAND is started once. It reads JSON lines on stdin, one per vector:
-    {"id": ..., "vector": <vector, upstream suite schema>, "params": {...}, "trust_anchors": [...]}
+Protocol: COMMAND is started twice (author vectors, then generated chains). Each time it
+reads JSON lines on stdin, one per vector:
+    {"id": ..., "vector": <vector, upstream suite schema without expected, title,
+                            description, notes, mutation>, "params": {...}, "trust_anchors": [...]}
 and writes one JSON line per vector on stdout:
     {"id": ..., "verdict": "PERMIT" | "DENY", "step": "<optional §8 step>"}
+Each asked id is answered once; any other line on stdout fails the check.
 """
 import argparse
 import collections
@@ -43,7 +46,7 @@ def oracle(suite_path, tag):
     """Decode a suite and run the Lean model; returns {id: verdict} for in-scope vectors, and the records."""
     inp = OUT / f"{tag}-input.json"
     run([sys.executable, "-I", str(ROOT / "vectors/decode.py"), str(suite_path), str(inp)])
-    res = run([str(LAKE), "exe", "aat-run", str(inp)])
+    res = subprocess.run([str(LAKE), "exe", "aat-run", str(inp)], cwd=ROOT, capture_output=True, text=True)
     verdicts = {}
     for line in res.stdout.splitlines():
         parts = line.split("\t")
@@ -54,22 +57,44 @@ def oracle(suite_path, tag):
     lost = [f"{i}: {r['reason']}" for i, r in recs.items() if r["scope"] == "error"]
     lost += [f"{i}: model answered {verdicts.get(i)!r}" for i, r in recs.items()
              if r["scope"] == "in" and verdicts.get(i) not in ("PERMIT", "DENY")]
+    if res.returncode:
+        lost.append(f"model runner exited with code {res.returncode}")
     verdicts = {i: v for i, v in verdicts.items() if v in ("PERMIT", "DENY") and recs[i]["scope"] == "in"}
     return verdicts, recs, lost
 
 
+# Fields that state or hint at the expected verdict: never sent to the implementation.
+HIDDEN = ("expected", "title", "description", "notes", "mutation")
+
+
+def blind(v):
+    return {k: x for k, x in v.items() if k not in HIDDEN}
+
+
 def run_impl(cmd, suite, vectors):
-    lines = [json.dumps({"id": v["id"], "vector": v, "params": suite["params"],
+    """Answers of the implementation for exactly these vectors. Anything else on
+    stdout — a line that is not a JSON object with a string id and verdict, an
+    id not asked in this run, an id answered twice — is a protocol error."""
+    lines = [json.dumps({"id": v["id"], "vector": blind(v), "params": suite["params"],
                          "trust_anchors": suite["trust_anchors"]}, ensure_ascii=False) for v in vectors]
     res = subprocess.run(cmd, shell=True, input="\n".join(lines) + "\n", capture_output=True, text=True)
-    got = {}
-    for line in res.stdout.splitlines():
+    asked = {v["id"] for v in vectors}
+    got, errors = {}, []
+    for n, line in enumerate(res.stdout.splitlines(), 1):
+        if not line.strip():
+            continue
         try:
             o = json.loads(line)
-            got[o["id"]] = o
-        except (ValueError, KeyError):
-            continue
-    return got, res.returncode, res.stderr[-2000:]
+        except ValueError:
+            errors.append(f"line {n}: not JSON"); continue
+        if not isinstance(o, dict) or not isinstance(o.get("id"), str) or not isinstance(o.get("verdict"), str):
+            errors.append(f"line {n}: not an object with string id and verdict"); continue
+        if o["id"] not in asked:
+            errors.append(f"line {n}: id {o['id']!r} was not asked in this run"); continue
+        if o["id"] in got:
+            errors.append(f"line {n}: id {o['id']!r} answered twice"); continue
+        got[o["id"]] = o
+    return got, res.returncode, res.stderr[-2000:], errors
 
 
 _tags = itertools.count()
@@ -83,7 +108,7 @@ def judge(cmd):
         doc["vectors"] = vectors
         path.write_text(json.dumps(doc, ensure_ascii=False))
         model, _, _ = oracle(path, f"shrink-{next(_tags)}")
-        impl, _, _ = run_impl(cmd, suite, vectors)
+        impl, _, _, _ = run_impl(cmd, suite, vectors)
         return {v["id"]: (model.get(v["id"]), impl.get(v["id"], {}).get("verdict", "NO ANSWER")) for v in vectors}
     return f
 
@@ -136,8 +161,11 @@ def main():
         if i in o_gen:
             ref[i], source[i], meta[i] = o_gen[i], "model", ("generated", v["mutation"], v["title"])
 
-    got_up, rc1, err1 = run_impl(a.impl, up, up["vectors"])
-    got_gen, rc2, err2 = run_impl(a.impl, gen, [v for v in gen["vectors"] if v["id"] in ref])
+    got_up, rc1, err1, perr1 = run_impl(a.impl, up, up["vectors"])
+    got_gen, rc2, err2, perr2 = run_impl(a.impl, gen, [v for v in gen["vectors"] if v["id"] in ref])
+    protocol = [f"author run, {e}" for e in perr1] + [f"generated run, {e}" for e in perr2]
+    if set(got_up) & set(got_gen):
+        protocol.append("an id is in both runs")  # cannot happen: ids are checked per run
     got = {**got_up, **got_gen}
 
     rows = []
@@ -207,22 +235,28 @@ def main():
         L += ["", f"## Потеря покрытия: {len(lost)}", "",
               "Проверка не пройдена: эти векторы не получили вердикта модели.", ""]
         L += [f"- {x}" for x in lost[:60]]
+    if protocol:
+        L += ["", f"## Нарушения протокола: {len(protocol)}", "",
+              "Проверка не пройдена: ответ реализации не соответствует протоколу.", ""]
+        L += [f"- {x}" for x in protocol[:60]]
     if rc1 or rc2:
         L += ["", f"**Реализация завершилась с ошибкой** (код {rc1 or rc2}): проверка не пройдена. "
               "Последние строки stderr:", "", "```", err1 if rc1 else err2, "```"]
     pathlib.Path(a.out).write_text("\n".join(L) + "\n", encoding="utf-8")
-    ok = not (dis or rc1 or rc2 or lost)
+    ok = not (dis or rc1 or rc2 or lost or protocol)
     if a.json:
         pathlib.Path(a.json).write_text(json.dumps({
             "ok": ok, "impl": a.impl, "seed": a.seed, "count": a.count, "model_commit": git_head(),
             "suite_sha256": suite_sha, "checked": len(rows), "agree": len(rows) - len(dis),
             "dangerous": [r[0] for r in too_lax], "spurious_denials": [r[0] for r in too_strict],
             "no_answer": [r[0] for r in dis if r[5] not in ("PERMIT", "DENY")],
-            "coverage_loss": lost, "impl_exit": rc1 or rc2,
+            "coverage_loss": lost, "protocol_errors": protocol, "impl_exit": rc1 or rc2,
             "minimal": [{"id": i, "model": t[0], "impl": t[1], "links": nl, "file": str(path.relative_to(ROOT)),
                          "steps": steps} for i, t, b0, b1, nl, steps, path in shrunk],
         }, indent=1, ensure_ascii=False))
     print("\n".join(L[:17]))
+    if protocol:
+        print(f"\nprotocol errors: {len(protocol)}: check failed")
     if lost:
         print(f"\ncoverage loss: {len(lost)} vector(s) without a model verdict: check failed")
     if rc1 or rc2:

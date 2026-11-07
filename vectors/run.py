@@ -35,7 +35,7 @@ def main():
                           str(OUT / "model-input.json")])
     subprocess.run([str(LAKE), "build", "aat-run"], cwd=ROOT, check=True, capture_output=True)
     res = subprocess.run([str(LAKE), "exe", "aat-run", str(OUT / "model-input.json")],
-                         cwd=ROOT, check=True, capture_output=True, text=True)
+                         cwd=ROOT, capture_output=True, text=True)
     rows = [l.split("\t") for l in res.stdout.splitlines() if l]
     got = {r[0]: r[1] for r in rows}
     state = {r[0]: [x for x in r[2].split(",") if x] if len(r) > 2 else [] for r in rows}
@@ -98,7 +98,9 @@ def main():
         print(f"  DECODER ERROR {r['id']}: {r['reason']}")
     for r in model_err:
         print(f"  NO MODEL VERDICT {r['id']}: {got.get(r['id'])}")
-    return 1 if dis or st_bad or sdiff or errors or model_err or dec.returncode else 0
+    if res.returncode:
+        print(f"  MODEL RUNNER exited with code {res.returncode}")
+    return 1 if dis or st_bad or sdiff or errors or model_err or dec.returncode or res.returncode else 0
 
 
 if __name__ == "__main__":

@@ -13,7 +13,87 @@ import sys
 from fractions import Fraction
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "vectors"))
-import decode  # noqa: E402  (token parsing, signature check, thumbprints)
+import decode  # noqa: E402  (base64, signature check, thumbprints, constraint maps)
+
+
+class Malformed(Exception):
+    """The presentation is malformed: the verifier denies."""
+
+
+# ---------- parsing: the decoder hands over JSON as written; this verifier parses it itself ----------
+
+def no_dup(j):
+    if "o" in j:
+        ks = [k for k, _ in j["o"]]
+        return len(ks) == len(set(ks)) and all(no_dup(v) for _, v in j["o"])
+    if "a" in j:
+        return all(no_dup(e) for e in j["a"])
+    return True
+
+
+def py(j):
+    """JSON tree -> Python; numbers: int only for integer literals, else a float marker."""
+    if "o" in j: return {k: py(v) for k, v in j["o"]}
+    if "a" in j: return [py(e) for e in j["a"]]
+    if "n" in j: return int(j["n"]) if not any(c in j["n"] for c in ".eE") else ("float", j["n"])
+    if "s" in j: return j["s"]
+    if "b" in j: return j["b"]
+    return None
+
+
+def is_int(x): return isinstance(x, int) and not isinstance(x, bool)
+
+
+def header_ok(h, typ):
+    if not no_dup(h): return False
+    h = py(h)
+    return isinstance(h, dict) and h.get("alg") == "Ed25519" and h.get("typ") == typ and "crit" not in h
+
+
+def jwk_ok(j):
+    x = j.get("x") if isinstance(j, dict) else None
+    return (isinstance(j, dict) and j.get("kty") == "OKP" and j.get("crv") == "Ed25519" and "d" not in j
+            and isinstance(x, str) and len(x) == 43 and all(c.isalnum() or c in "-_" for c in x))
+
+
+def aat_tools(ad):
+    if not isinstance(ad, list): return None
+    es = [e for e in ad if isinstance(e, dict) and e.get("type") == "attenuating_agent_token"]
+    if len(es) != 1 or not isinstance(es[0].get("tools"), dict): return None
+    if not all(isinstance(m, dict) for m in es[0]["tools"].values()): return None
+    return list(es[0]["tools"])
+
+
+def parse_link(t, root):
+    if not no_dup(t["payload"]): raise Malformed("duplicate names")
+    p = py(t["payload"])
+    if not isinstance(p.get("jti"), str) or not p["jti"]: raise Malformed("jti")
+    if not jwk_ok((p.get("cnf") or {}).get("jwk") if isinstance(p.get("cnf"), dict) else None):
+        raise Malformed("cnf.jwk")
+    names = aat_tools(p.get("authorization_details"))
+    maps = dict(t["maps"])
+    if names is None or any(n not in maps for n in names): raise Malformed("authorization_details")
+    for k in ("iat", "exp", "del_depth", "del_max_depth"):
+        if not is_int(p.get(k)): raise Malformed(k)
+    if p["del_depth"] < 0 or p["del_max_depth"] < 0: raise Malformed("depth")
+    if not isinstance(p.get("iss"), str): raise Malformed("iss")
+    if not root and not isinstance(p.get("par_hash"), str): raise Malformed("par_hash")
+    if not isinstance(t.get("thumb"), str): raise Malformed("thumb")
+    return {"issuer": p["iss"], "holder": t["thumb"], "tools": [[n, maps[n]] for n in names], "jti": p["jti"],
+            "delDepth": p["del_depth"], "delMaxDepth": p["del_max_depth"], "iat": p["iat"], "exp": p["exp"],
+            "parHash": p.get("par_hash") if "par_hash" in p else None, "selfHash": t["selfHash"],
+            "sigBy": t["sigBy"]}
+
+
+def parse_pop(q):
+    if not no_dup(q["payload"]): raise Malformed("PoP duplicate names")
+    p = py(q["payload"])
+    if not is_int(p.get("iat")): raise Malformed("PoP iat")
+    s = lambda k: p[k] if isinstance(p.get(k), str) else ""
+    opt = lambda k: (p[k] if isinstance(p[k], str) else "") if k in p else None
+    return {"sigBy": q["sigBy"], "jti": s("jti"), "aatId": s("aat_id"), "aatHash": s("aat_hash"),
+            "aatTool": s("aat_tool"), "iat": p["iat"], "aatAud": opt("aat_aud"), "nonce": opt("nonce"),
+            "hta": q["hta"] if isinstance(p.get("hta"), dict) else None}
 
 
 def num(v):
@@ -152,7 +232,16 @@ def verify(P, anchors, chain):
 
 
 def invoke(x):
-    P, E, chain, call, pop = x["params"], x["endpoint"], x["chain"], x["call"], x["pop"]
+    P, E, raw, call = x["params"], x["endpoint"], x["chain"], x["call"]
+    sizes = [t["size"] for t in raw]
+    if any(n > P["maxTokenSize"] for n in sizes) or sum(sizes) > P["maxChainSize"]: return False
+    if not all(header_ok(t["header"], "aat+jwt") for t in raw) or not header_ok(x["pop"]["header"], "aat-pop+jwt"):
+        return False
+    try:
+        chain = [parse_link(t, i == 0) for i, t in enumerate(raw)]
+        pop = parse_pop(x["pop"])
+    except Malformed:
+        return False
     if not verify(P, x["anchors"], chain): return False
     leaf, args = chain[-1], call["args"]
     if len({k for k, _ in args}) != len(args): return False
@@ -177,11 +266,12 @@ def main():
         if not line.strip(): continue
         req = json.loads(line)
         suite = {"params": req["params"], "trust_anchors": req["trust_anchors"], "keys": {}, "vectors": [req["vector"]]}
-        try:
-            rec = decode.decode(suite)[0]
-            ok = rec["scope"] == "in" and invoke(rec["input"])
-        except Exception:
-            ok = False
+        # only a stated precondition of the decoder (byte level, inadmissible numbers) denies here;
+        # any other exception is a bug in this fixture and must crash it, not turn into DENY
+        rec = decode.decode(suite)[0]
+        if rec["scope"] == "error":
+            raise SystemExit(f"decoder error on {req['id']}: {rec['reason']}")
+        ok = rec["scope"] == "in" and invoke(rec["input"])
         print(json.dumps({"id": req["id"], "verdict": "PERMIT" if ok else "DENY"}), flush=True)
 
 

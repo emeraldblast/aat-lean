@@ -20,8 +20,8 @@ jobs:
         run: |
           sha256sum vectors/upstream/aat-jws-vectors.json | grep -q b7a42e9dfdce7fbc1f623670bf060f90e6d6b25f64384cbab1bd79363e82209b
           python3 -I vectors/run.py
-      - name: Differential conformance self-check (model adapter must agree on every vector)
-        run: python3 -I conformance/check.py --impl "python3 -I conformance/examples/model_impl.py" --count 100 --json conformance/out/summary.json
+      - name: Conformance harness self-test (passes the model, catches the buggy fixture)
+        run: python3 -I conformance/selftest.py --count 100
       - name: Conformance report
         if: always()
         uses: actions/upload-artifact@v4

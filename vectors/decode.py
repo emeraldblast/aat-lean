@@ -375,9 +375,10 @@ def decode(suite):
     known = [k["jwk"] for k in suite["keys"].values()] + [a["jwk"] for a in suite["trust_anchors"]]
     out = []
     for v in suite["vectors"]:
-        exp = v["expected"]
-        rec = {"id": v["id"], "expected": exp["verdict"], "step": exp.get("step"), "title": v["title"]}
-        modeled = exp["verdict"] == "PERMIT" or exp.get("step") in MODELED_STEPS
+        # a vector without `expected` (sent blind to an implementation) is decided by the model
+        exp = v.get("expected") or {"verdict": None, "step": None}
+        rec = {"id": v["id"], "expected": exp["verdict"], "step": exp.get("step"), "title": v.get("title", "")}
+        modeled = exp["verdict"] in ("PERMIT", None) or exp.get("step") in MODELED_STEPS
         try:
             if not modeled:
                 raise OutOfScope(f"expected step {exp.get('step')} not modeled")

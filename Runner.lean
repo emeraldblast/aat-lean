@@ -154,6 +154,7 @@ def runOne (j : Json) : Except String (Decision × List String × String) := do
 def main (argv : List String) : IO UInt32 := do
   let path := argv.headD "vectors/out/model-input.json"
   let recs ← IO.ofExcept ((Json.parse (← IO.FS.readFile path)) >>= (·.getArr?))
+  let mut errors := 0
   for r in recs do
     let id := (r.getObjVal? "id" >>= (·.getStr?)).toOption.getD "?"
     if (r.getObjVal? "scope" >>= (·.getStr?)).toOption != some "in" then continue
@@ -161,5 +162,8 @@ def main (argv : List String) : IO UInt32 := do
     | .ok (d, st, stage) =>
       let v := match d with | .allow => "PERMIT" | .deny => "DENY"
       IO.println s!"{id}\t{v}\t{",".intercalate st.reverse}\t{stage}"
-    | .error e => IO.println s!"{id}\tERROR {e}\t"
-  pure 0
+    | .error e =>
+      IO.println s!"{id}\tERROR {e}\t"
+      errors := errors + 1
+  -- любая ошибка входа — ненулевой код: вызывающий не может её пропустить
+  pure (if errors == 0 then 0 else 1)
