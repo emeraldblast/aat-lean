@@ -1,8 +1,8 @@
-"""Vigility: check an AAT-02 verifier against the proved Lean model.
+"""Differential conformance check of an AAT-02 verifier against the proved Lean model.
 
-    python3 -I vigility/check.py --impl "COMMAND" [--seed 1] [--count 300] [--out report.md]
+    python3 -I conformance/check.py --impl "COMMAND" [--seed 1] [--count 300] [--out report.md]
 
-Inputs: the author's 229 vectors plus COUNT generated chains (vigility/generate.py).
+Inputs: the author's 229 vectors plus COUNT generated chains (conformance/generate.py).
 Oracle: the Lean model (`lake exe aat-run`) — the same function T1–T9 are proved
 about. For author vectors outside the model's scope (byte-level checks), the
 author's expected verdict is the reference.
@@ -21,7 +21,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAKE = pathlib.Path.home() / ".elan/bin/lake"
-OUT = ROOT / "vigility/out"
+OUT = ROOT / "conformance/out"
 UPSTREAM = ROOT / "vectors/upstream/aat-jws-vectors.json"
 
 
@@ -68,7 +68,7 @@ def main():
 
     up = json.load(open(UPSTREAM))
     gen_path = OUT / f"gen-{a.seed}.json"
-    run([sys.executable, "-I", str(ROOT / "vigility/generate.py"), str(a.seed), str(a.count), str(gen_path)])
+    run([sys.executable, "-I", str(ROOT / "conformance/generate.py"), str(a.seed), str(a.count), str(gen_path)])
     gen = json.load(open(gen_path))
 
     o_up, rec_up = oracle(UPSTREAM, "upstream")
@@ -100,7 +100,7 @@ def main():
     too_strict = [r for r in dis if r[3] == "PERMIT" and r[5] == "DENY"]
 
     L = [
-        "# Vigility — отчёт о проверке соответствия AAT-02",
+        "# Отчёт о проверке соответствия AAT-02",
         "",
         f"Реализация: `{a.impl}`",
         f"Входы: {len(up['vectors'])} авторских векторов + {sum(1 for r in rows if r[1] == 'generated')} "
@@ -129,7 +129,7 @@ def main():
     else:
         L += ["Расхождений нет."]
     L += ["", "## Как воспроизвести", "",
-          f"`python3 -I vigility/check.py --impl \"{a.impl}\" --seed {a.seed} --count {a.count}`"]
+          f"`python3 -I conformance/check.py --impl \"{a.impl}\" --seed {a.seed} --count {a.count}`"]
     if rc1 or rc2:
         L += ["", f"**Реализация завершилась с ошибкой** (код {rc1 or rc2}): проверка не пройдена. "
               "Последние строки stderr:", "", "```", err1 if rc1 else err2, "```"]

@@ -51,26 +51,26 @@ the **same `invokeWithState` function the theorems are about**
   `cnf.jwk` form, sizes, duplicate JSON members, inadmissible numbers) that the
   model leaves to its stated assumptions.
 
-## Vigility: checking another implementation
+## Differential conformance testing
 
-`vigility/` turns the model into a conformance checker for any AAT-02 verifier:
+`conformance/` uses the model as a test oracle for other AAT-02 verifiers:
 
 ```
-python3 -I vigility/check.py --impl "COMMAND" --seed 1 --count 300
+python3 -I conformance/check.py --impl "COMMAND" --seed 1 --count 300
 ```
 
-It runs `COMMAND` (a JSON-lines protocol, see `vigility/check.py`) on the 229
-author vectors plus generated signed chains (`vigility/generate.py`: 1–4 tokens,
+It runs `COMMAND` (a JSON-lines protocol, see `conformance/check.py`) on the 229
+author vectors plus generated signed chains (`conformance/generate.py`: 1–4 tokens,
 all nine constraint types, one mutation per vector against a §8 step), and
 compares every verdict with the Lean model. The report groups disagreements by
-§8 step and marks the dangerous ones (model DENY, implementation PERMIT).
+§8 step and separates the dangerous ones (model DENY, implementation PERMIT).
 
-- `vigility/examples/model_impl.py` answers with the model itself: 529 of 529 agree,
-  which checks the harness.
-- `vigility/examples/naive_impl.py` is a **demo** verifier with three deliberate bugs
-  (range inclusivity, no `par_hash` check, no chain `aud` check). Vigility reports all
-  three, from the author vectors and independently from the generated chains, with
-  no false alarms.
+- `conformance/examples/model_impl.py` answers with the model itself: 529 of 529
+  agree, which checks the harness.
+- `conformance/examples/naive_impl.py` is a verifier with three deliberate bugs
+  (range inclusivity, no `par_hash` check, no chain `aud` check). The check finds
+  all three, from the author vectors and independently from the generated chains,
+  with no false alarms.
 
 ## Assumptions
 
@@ -99,6 +99,7 @@ can distinguish them.
 | `AatLean/Invoke.lean` | Steps 6c and 7 with state, T8, T9 |
 | `AatLean/Extension/Revocation.lean` | T5 |
 | `Runner.lean`, `vectors/` | Vector decoder, runner, report |
+| `conformance/` | Differential conformance testing of other verifiers |
 | `spec/` | Mapping of AAT-02 to the model; position relative to Davliatshin's report |
 
 ## Build

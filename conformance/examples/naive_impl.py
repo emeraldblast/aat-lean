@@ -1,11 +1,11 @@
-"""DEMO ONLY: a naive AAT-02 verifier with three deliberate bugs, to show what
-Vigility's report finds. Not a reference implementation.
+"""TEST FIXTURE ONLY: a naive AAT-02 verifier with three deliberate bugs, to show what
+the conformance report finds. Not a reference implementation.
 
   BUG 1  range bounds are always treated as inclusive (min_inclusive / max_inclusive ignored)
   BUG 2  par_hash is not checked (step 4q)
   BUG 3  chain aud is not checked (step 6c)
 
-Speaks the Vigility JSON-lines protocol (see vigility/check.py).
+Speaks the conformance JSON-lines protocol (see conformance/check.py).
 """
 import json
 import pathlib

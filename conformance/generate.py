@@ -3,10 +3,10 @@
 Chains of 1..4 tokens over all nine constraint types: children usually narrow
 their parent, sometimes deliberately widen it; one mutation per vector breaks a
 §8 step (signature, par_hash, depth, time, jti, aud, PoP) or the call. The
-generator does not decide the verdict: the Lean model does (vigility/check.py).
+generator does not decide the verdict: the Lean model does (conformance/check.py).
 Output uses the upstream suite's schema, so vectors/decode.py reads it as is.
 
-    python3 -I vigility/generate.py SEED COUNT OUT.json
+    python3 -I conformance/generate.py SEED COUNT OUT.json
 """
 import copy
 import hashlib

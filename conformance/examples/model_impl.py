@@ -1,6 +1,6 @@
 """Reference adapter: answers with the Lean model itself. Must agree 100% on the
 model's scope; outside it (byte-level checks) it answers DENY. Used to check that
-the Vigility harness itself is honest."""
+the conformance harness itself is honest."""
 import json
 import pathlib
 import subprocess
