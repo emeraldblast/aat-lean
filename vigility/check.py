@@ -131,11 +131,14 @@ def main():
     L += ["", "## Как воспроизвести", "",
           f"`python3 -I vigility/check.py --impl \"{a.impl}\" --seed {a.seed} --count {a.count}`"]
     if rc1 or rc2:
-        L += ["", f"Реализация завершилась с кодом {rc1 or rc2}. Последние строки stderr:", "", "```", err1 or err2, "```"]
+        L += ["", f"**Реализация завершилась с ошибкой** (код {rc1 or rc2}): проверка не пройдена. "
+              "Последние строки stderr:", "", "```", err1 if rc1 else err2, "```"]
     pathlib.Path(a.out).write_text("\n".join(L) + "\n", encoding="utf-8")
     print("\n".join(L[:17]))
+    if rc1 or rc2:
+        print(f"\nimplementation exited with code {rc1 or rc2}: check failed")
     print(f"\nreport: {a.out}")
-    return 1 if dis else 0
+    return 1 if dis or rc1 or rc2 else 0
 
 
 if __name__ == "__main__":

@@ -4,7 +4,8 @@ The model treats signatures and SHA-256 as ideal (assumptions 1, 5). This
 decoder computes, for each token, the set of keys under which its Ed25519
 signature actually verifies (OpenSSL), and the SHA-256 of its JWS Signing
 Input; the model consumes those. Keys are identified by their JWK thumbprint
-URI (RFC 7638 / 9278). For each vector we extract, losslessly:
+URI (RFC 7638 / 9278). Each token is read from its `compact` serialization
+only. For each vector we extract, losslessly:
   - params (suite defaults overridden by the vector) and `now`,
   - trust anchors as (issuer, key thumbprint),
   - per token: iss, holder = thumbprint URI of cnf.jwk, jti, iat, exp,
@@ -55,6 +56,40 @@ def _no_dups(pairs):
 
 def loads(s):
     return json.loads(s, parse_float=Decimal, parse_int=int, object_pairs_hook=_no_dups)
+
+
+class _Obj(list):
+    """A JSON object as its member list, before duplicate names are resolved."""
+
+
+def load_args(s):
+    """Top-level argument pairs. Duplicate top-level names are kept: step 6b
+    must see them. Nested objects become dicts recursively; a duplicate name
+    inside a nested object is outside the model (assumption 7)."""
+    def nested(x):
+        if isinstance(x, _Obj):
+            if len({k for k, _ in x}) != len(x):
+                raise OutOfScope("precondition: duplicate JSON member names in a nested argument (assumption 7)")
+            return {k: nested(v) for k, v in x}
+        if isinstance(x, list):
+            return [nested(e) for e in x]
+        return x
+    top = json.loads(s, parse_float=Decimal, parse_int=int, object_pairs_hook=_Obj)
+    if not isinstance(top, _Obj):
+        raise OutOfScope("precondition: arguments are not a JSON object")
+    return [(k, nested(v)) for k, v in top]
+
+
+def jws(token):
+    """Payload, signing input and signature, all from the one compact
+    serialization: the other fields of the vector are not trusted to agree."""
+    parts = token["compact"].split(".")
+    if len(parts) != 3:
+        raise OutOfScope("precondition: compact JWS is not three segments (byte level)")
+    payload = loads(ed25519.b64u_decode(parts[1]).decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise OutOfScope("precondition: JWS payload is not a JSON object")
+    return payload, (parts[0] + "." + parts[1]).encode(), ed25519.b64u_decode(parts[2])
 
 
 def admissible(x):
@@ -221,7 +256,7 @@ def intclaim(p, k):
 
 
 def link(token, candidates):
-    p = loads(token["payload_json"])
+    p, msg, sig = jws(token)
     entries = [e for e in p.get("authorization_details", []) if e.get("type") == "attenuating_agent_token"]
     if len(entries) != 1:
         raise OutOfScope("not exactly one attenuating_agent_token entry")
@@ -231,8 +266,6 @@ def link(token, candidates):
     if not isinstance(p.get("jti"), str):
         raise OutOfScope("precondition: jti missing (3j/4b1)")
     jwk = p["cnf"]["jwk"]
-    msg = token["signing_input"].encode()
-    sig = ed25519.b64u_decode(token["signature_b64"])
     sig_by = sorted({thumbprint_uri(k) for k in candidates + [jwk]
                      if k.get("kty") == "OKP" and ed25519.verify(k["x"], msg, sig)})
     ph = p.get("par_hash")
@@ -270,15 +303,13 @@ def pop_of(v, candidates, args_pairs):
     pop = v.get("pop")
     if not pop:
         raise OutOfScope("no PoP JWT")
-    p = loads(pop["payload_json"])
+    p, msg, sig = jws(pop)
     if not isinstance(p.get("iat"), int) or isinstance(p.get("iat"), bool):
         raise OutOfScope("precondition: PoP iat is not a NumericDate (parsing, 7c)")
     hta = p.get("hta")
     hta = [[k, value(x)] for k, x in hta.items()] if isinstance(hta, dict) else None
     aud = p["aat_aud"] if isinstance(p.get("aat_aud"), str) else ("" if "aat_aud" in p else None)
     nonce = p["nonce"] if isinstance(p.get("nonce"), str) else ("" if "nonce" in p else None)
-    msg = pop["signing_input"].encode()
-    sig = ed25519.b64u_decode(pop["signature_b64"])
     sig_by = sorted({thumbprint_uri(k) for k in candidates
                      if k.get("kty") == "OKP" and ed25519.verify(k["x"], msg, sig)})
     return {"jti": strfield(p, "jti"), "aatId": strfield(p, "aat_id"), "aatHash": strfield(p, "aat_hash"),
@@ -299,15 +330,11 @@ def decode(suite):
                 raise OutOfScope(f"expected step {exp.get('step')} not modeled")
             params = dict(suite["params"]); params.update(v.get("params") or {})
             now = v.get("now", params["now"])
-            # keep duplicate top-level argument names: step 6b must see them
-            args = json.loads(v["args_json"], parse_float=Decimal, parse_int=int,
-                              object_pairs_hook=lambda kv: kv)
-            args = [(k, x if not isinstance(x, list) or not x or not isinstance(x[0], tuple)
-                     else dict(x)) for k, x in args]
+            args = load_args(v["args_json"])
             chain, cands = [], list(known)
             for t in v["chain"]:
                 l = link(t, cands)
-                cands = cands + [loads(t["payload_json"])["cnf"]["jwk"]]
+                cands = cands + [jws(t)[0]["cnf"]["jwk"]]
                 chain.append(l)
             pol = v.get("policy") or {}
             rs = v.get("replay_state") or {}
