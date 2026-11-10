@@ -64,6 +64,14 @@ def aat_tools(ad):
     return list(es[0]["tools"])
 
 
+def is_uri(x):
+    """3k: RFC 3986 scheme, then ':', and only URI characters."""
+    ok = set("-._~:/?#[]@!$&'()*+,;=%")
+    if not x or not all(c.isascii() and (c.isalnum() or c in ok) for c in x): return False
+    i = x.find(":")
+    return i > 0 and x[0].isalpha() and all(c.isalnum() or c in "+-." for c in x[1:i])
+
+
 def parse_link(t, root):
     if not no_dup(t["payload"]): raise Malformed("duplicate names")
     p = py(t["payload"])
@@ -77,6 +85,7 @@ def parse_link(t, root):
         if not is_int(p.get(k)): raise Malformed(k)
     if p["del_depth"] < 0 or p["del_max_depth"] < 0: raise Malformed("depth")
     if not isinstance(p.get("iss"), str): raise Malformed("iss")
+    if root and not is_uri(p["iss"]): raise Malformed("iss is not a URI")
     if not root and not isinstance(p.get("par_hash"), str): raise Malformed("par_hash")
     if not isinstance(t.get("thumb"), str): raise Malformed("thumb")
     return {"issuer": p["iss"], "holder": t["thumb"], "tools": [[n, maps[n]] for n in names], "jti": p["jti"],
@@ -276,4 +285,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    decode.deep(main)  # payload trees may nest deeply

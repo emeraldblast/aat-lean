@@ -30,6 +30,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))  # shrink, mint, check under -I
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "vectors"))
+import decode  # noqa: E402  (deep: decoder output may nest JSON deeply)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAKE = pathlib.Path.home() / ".elan/bin/lake"
@@ -52,7 +54,7 @@ def oracle(suite_path, tag):
         parts = line.split("\t")
         if len(parts) >= 2:
             verdicts[parts[0]] = parts[1]
-    recs = {r["id"]: r for r in json.load(open(inp))}
+    recs = {r["id"]: r for r in decode.load(inp)}
     # every in-scope vector must get a verdict; anything else is a coverage loss
     lost = [f"{i}: {r['reason']}" for i, r in recs.items() if r["scope"] == "error"]
     lost += [f"{i}: model answered {verdicts.get(i)!r}" for i, r in recs.items()

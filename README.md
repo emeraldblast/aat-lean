@@ -112,7 +112,9 @@ The numbers are the ones used in the code, `vectors/scope.json` and
 7. Enforcement-point profile and byte level: only `alg` `Ed25519` and only
    Ed25519 keys (`cnf.jwk` "encodes a public key" when `kty` is `OKP`, `crv`
    is `Ed25519`, `x` is 43 base64url characters and there is no `d`; steps
-   3l, 4b2), no `crit` parameter understood, a JWS header with a repeated
+   3l, 4b2; an Ed25519 signature is attributed only to keys with `crv`
+   `Ed25519`), the root `iss` a URI in a minimal sense (an RFC 3986 scheme,
+   `:`, only URI characters; step 3k), no `crit` parameter understood, a JWS header with a repeated
    member name rejected (RFC 7515 §4 permits it); a repeated member name
    inside a nested call argument is left out of the model.
 

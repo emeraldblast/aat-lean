@@ -101,6 +101,23 @@ def JVal.asNonEmpty (v : JVal) : Option String :=
 /-- Символ base64url. -/
 def b64uChar (c : Char) : Bool := c.isAlphanum || c == '-' || c == '_'
 
+/-- Символ, допустимый в URI (RFC 3986 §2: unreserved, reserved, `%`). -/
+def uriChar (c : Char) : Bool := c.isAlphanum || "-._~:/?#[]@!$&'()*+,;=%".toList.contains c
+
+/-- Схема URI до `:` (RFC 3986 §3.1): после первой буквы — буквы, цифры, `+`, `-`, `.`. -/
+def schemeRest : List Char → Bool
+  | [] => false
+  | ':' :: _ => true
+  | c :: cs => (c.isAlphanum || c == '+' || c == '-' || c == '.') && schemeRest cs
+
+/-- 3k: «is a URI» — схема RFC 3986 §3.1, затем `:`, и все символы
+    допустимы в URI (прочтение: синтаксис остальных частей не разбирается). -/
+def isUri (s : String) : Bool :=
+  s.toList.all uriChar &&
+  (match s.toList with
+   | c :: cs => c.isAlpha && schemeRest cs
+   | [] => false)
+
 /-- 3l, 4b2: `jwk` — открытый ключ Ed25519 (прочтение в шапке модуля). -/
 def jwkOk (j : JVal) : Bool :=
   (j.field "kty" >>= JVal.asStr) == some "OKP" &&
@@ -156,7 +173,7 @@ def parseFields (isRoot : Bool) (t : RawToken) : Option Link := do
   let tools ← names.mapM (fun n => (t.maps.lookup n).map (n, ·))
   let dd ← p.field "del_depth" >>= JVal.asNat                        -- 3c, 4b4
   let dmd ← p.field "del_max_depth" >>= JVal.asNat                   -- 3i, 4b4
-  if isRoot then guard (p.field "iss" >>= JVal.asStr).isSome         -- 3k
+  if isRoot then guard ((p.field "iss" >>= JVal.asStr).any isUri)   -- 3k
   let iat ← p.field "iat" >>= JVal.asInt                             -- 3b, 4b5
   let exp ← p.field "exp" >>= JVal.asInt                             -- 3b, 4b5
   pure { issuer := "", holder := "", tools, jti, delDepth := dd, delMaxDepth := dmd, iat, exp,
@@ -496,7 +513,10 @@ def JVal.drop (v : JVal) (k : String) : JVal :=
 
 -- Цепочка `mk chainT` и PoP `popT` из `Invoke.lean`; числа в литералах — её поля.
 def linkT (i : Nat) : Link := (mk chainT).getD i human
-def rootRawT : RawToken := rawT (linkT 0) "0" "100" "0" "8"
+-- корень называет издателя-URI (3k); якорь — тот же издатель с ключом `anchor-key`
+def issT : String := "https://root.example"
+def anchorsUT : List Anchor := [⟨issT, "anchor-key"⟩]
+def rootRawT : RawToken := rawT { linkT 0 with issuer := issT } "0" "100" "0" "8"
 def childRawT : RawToken := rawT (linkT 1) "0" "100" "1" "8"
 
 /-- PoP как записан: те же поля, что `popT`. -/
@@ -507,7 +527,7 @@ def popRawT : RawPoP := { header := hdrT "aat-pop+jwt", payload := popPayloadT, 
                           hta := popT.hta }
 
 def runT (r c : RawToken) (q : RawPoP := popRawT) : Decision :=
-  (invokeTokens PT ET anchorsT [r, c] callT q []).1
+  (invokeTokens PT ET anchorsUT [r, c] callT q []).1
 
 def withRoot (f : JVal → JVal) : RawToken := { rootRawT with payload := f rootRawT.payload }
 def withChild (f : JVal → JVal) : RawToken := { childRawT with payload := f childRawT.payload }
@@ -585,6 +605,16 @@ example : runT (withHdr rootRawT (fun h => match h with
     | .obj kvs => .obj (kvs ++ [("typ", .str "x")]) | v => v)) childRawT = .deny := by decide +kernel
 -- другие параметры заголовка игнорируются (§3.5)
 example : runT (withHdr rootRawT (·.set "kid" (.str "k1"))) childRawT = .allow := by decide +kernel
+-- 3k: iss корня — URI, даже если якорь настроен с тем же не-URI
+example : runT (withRoot (·.set "iss" (.str "not a URI"))) childRawT = .deny := by decide +kernel
+example : (invokeTokens PT ET [⟨"root-key", "anchor-key"⟩]
+    [withRoot (·.set "iss" (.str "root-key")), childRawT] callT popRawT []).1 = .deny := by decide +kernel
+example : isUri "https://auth.example.com" = true := by decide +kernel
+example : isUri "urn:ietf:params:oauth:jwk-thumbprint:sha-256:abc" = true := by decide +kernel
+example : isUri "not a URI" = false := by decide +kernel
+example : isUri ":x" = false := by decide +kernel
+example : isUri "1a:b" = false := by decide +kernel
+example : isUri "https://a b" = false := by decide +kernel
 -- 3d: par_hash у корня, даже не строка
 example : runT (withRoot (·.set "par_hash" (.null))) childRawT = .deny := by decide +kernel
 

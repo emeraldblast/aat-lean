@@ -12,6 +12,9 @@ import pathlib
 import subprocess
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import decode  # noqa: E402  (deep: decoder output may nest JSON deeply)
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAKE = pathlib.Path.home() / ".elan/bin/lake"
 SUITE = ROOT / "vectors/upstream/aat-jws-vectors.json"
@@ -39,7 +42,7 @@ def main():
     rows = [l.split("\t") for l in res.stdout.splitlines() if l]
     got = {r[0]: r[1] for r in rows}
     state = {r[0]: [x for x in r[2].split(",") if x] if len(r) > 2 else [] for r in rows}
-    recs = json.load(open(OUT / "model-input.json"))
+    recs = decode.load(OUT / "model-input.json")
     if "--update-scope" in sys.argv[1:]:
         doc = json.load(open(SCOPE))
         doc["out"] = {r["id"]: r["reason"] for r in recs if r["scope"] == "out"}

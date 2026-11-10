@@ -272,6 +272,13 @@ SUITES = {
                 "       | none => false)\n   | some _ => false)", "       | none => false)\n   | some _ => true)"),
             "header: duplicate names accepted": (
                 "  h.noDup &&\n", ""),
+            "3k: root iss need not be a URI": (
+                "  if isRoot then guard ((p.field \"iss\" >>= JVal.asStr).any isUri)   -- 3k",
+                "  if isRoot then guard (p.field \"iss\" >>= JVal.asStr).isSome"),
+            "isUri: characters not checked": (
+                "  s.toList.all uriChar &&\n", ""),
+            "isUri: scheme not checked": (
+                "   | c :: cs => c.isAlpha && schemeRest cs\n", "   | _ :: _ => true\n"),
             "7c: PoP iat optional": (
                 '  let iat ← p.field "iat" >>= JVal.asInt                             -- 7c',
                 '  let iat := (p.field "iat" >>= JVal.asInt).getD 50'),

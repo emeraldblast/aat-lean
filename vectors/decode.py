@@ -29,6 +29,7 @@ import hashlib
 import json
 import pathlib
 import sys
+import threading
 from decimal import Decimal
 from fractions import Fraction
 
@@ -129,24 +130,33 @@ def field(x, k):
     return None
 
 
+def segment(s):
+    """A base64url JSON segment as written. Any JSON value is passed to the
+    model as is — an array or a string carries no claims and the model denies
+    (2c, 3a). A segment that is not base64url, UTF-8 or JSON is passed as
+    null, which the model treats the same way."""
+    try:
+        return tree(ed25519.b64u_decode(s).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, OutOfScope):
+        return None
+
+
 def jws(token):
     """Payload tree, signing input and signature, all from the one compact
     serialization: the other fields of the vector are not trusted to agree."""
     parts = token["compact"].split(".")
     if len(parts) != 3:
         raise OutOfScope("precondition: compact JWS is not three segments (byte level)")
-    payload = tree(ed25519.b64u_decode(parts[1]).decode("utf-8"))
-    if not isinstance(payload, _Obj):
-        raise OutOfScope("precondition: JWS payload is not a JSON object")
-    return payload, (parts[0] + "." + parts[1]).encode(), ed25519.b64u_decode(parts[2])
+    try:
+        sig = ed25519.b64u_decode(parts[2])
+    except ValueError:
+        sig = b""
+    return segment(parts[1]), (parts[0] + "." + parts[1]).encode(), sig
 
 
 def jws_header(token):
     """The JWS Protected Header as written (a tree, like the payload)."""
-    h = tree(ed25519.b64u_decode(token["compact"].split(".")[0]).decode("utf-8"))
-    if not isinstance(h, _Obj):
-        raise OutOfScope("precondition: JWS header is not a JSON object")
-    return h
+    return segment(token["compact"].split(".")[0])
 
 
 def cnf_jwk(p):
@@ -159,9 +169,11 @@ _POOL = concurrent.futures.ThreadPoolExecutor(16)
 
 
 def signed_by(keys, msg, sig):
-    """Thumbprint URIs of the OKP keys under which `sig` verifies over `msg`.
+    """Thumbprint URIs of the Ed25519 keys under which `sig` verifies over `msg`.
+    Only a key with crv Ed25519 can verify an Ed25519 signature (3a, 4a, 7a:
+    alg consistent with the key): the x of any other key is not tried.
     Each check is an independent OpenSSL process; they run in parallel."""
-    keys = [k for k in keys if thumb(k) is not None]
+    keys = [k for k in keys if thumb(k) is not None and k.get("crv") == "Ed25519"]
     ok = _POOL.map(lambda k: ed25519.verify(k["x"], msg, sig), keys)
     return sorted({thumbprint_uri(k) for k, good in zip(keys, ok) if good})
 
@@ -377,7 +389,40 @@ def pop_of(v, candidates, args_pairs):
             "sigBy": signed_by(candidates, msg, sig)}
 
 
+def deep(f):
+    """Runs f() in a thread with a 512 MiB stack and a high recursion limit, and
+    restores the limit after. A signed token may nest JSON as deep as
+    MAX_TOKEN_SIZE allows, and every pass over such a tree (parse, encode,
+    load, dump) recurses: all of them go through here. The limit is raised
+    only while f runs, so elsewhere deep nesting is a RecursionError, not a
+    stack overflow."""
+    out = {}
+
+    def body():
+        try:
+            out["v"] = f()
+        except BaseException as e:  # re-raised in the caller's thread
+            out["e"] = e
+    old_limit = sys.getrecursionlimit()
+    old_stack = threading.stack_size(1 << 29)
+    sys.setrecursionlimit(1_000_000)
+    try:
+        t = threading.Thread(target=body)
+        t.start()
+        t.join()
+    finally:
+        sys.setrecursionlimit(old_limit)
+        threading.stack_size(old_stack)
+    if "e" in out:
+        raise out["e"]
+    return out["v"]
+
+
 def decode(suite):
+    return deep(lambda: _decode(suite))
+
+
+def _decode(suite):
     anchors = [{"iss": a["iss"], "key": thumbprint_uri(a["jwk"])} for a in suite["trust_anchors"]]
     known = [k["jwk"] for k in suite["keys"].values()] + [a["jwk"] for a in suite["trust_anchors"]]
     out = []
@@ -432,11 +477,18 @@ def decode(suite):
     return out
 
 
+def dump(obj, path):
+    deep(lambda: pathlib.Path(path).write_text(json.dumps(obj, ensure_ascii=False)))
+
+
+def load(path):
+    return deep(lambda: json.loads(pathlib.Path(path).read_text()))
+
+
 def main():
     suite = json.load(open(sys.argv[1]))
     recs = decode(suite)
-    with open(sys.argv[2], "w") as f:
-        json.dump(recs, f, indent=1, ensure_ascii=False)
+    dump(recs, sys.argv[2])
     inn = [r for r in recs if r["scope"] == "in"]
     print(f"{len(recs)} vectors, {len(inn)} in scope "
           f"({sum(r['expected'] == 'PERMIT' for r in inn)} PERMIT, "
