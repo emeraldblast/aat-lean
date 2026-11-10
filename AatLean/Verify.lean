@@ -438,9 +438,12 @@ theorem depth_from_root (hc : allPairs (pairOk P) c = true) :
     have := (pairCore_spec hp.1).2.2.1
     omega
 
-/-- **Т7′ (новое: обратное направление B9).** Шаг 3c тоже не меняет ни одного
-    вердикта: «корень на глубине 0» следует из шага 5 и 4d. Вместе с
-    `t7_redundant`: 3c и шаг 5 избыточны взаимно — достаточно любого одного. -/
+/-- **Т7′ (новое: обратное направление B9).** Проверка значения в шаге 3c
+    тоже не меняет ни одного вердикта: «корень на глубине 0» следует из шага 5
+    и 4d. Вместе с `t7_redundant`: она и шаг 5 избыточны взаимно. Проверка
+    типа в 3c («целое») не избыточна; в модели она — разбор (`Parse.lean`,
+    `JVal.asNat`): J.21.9 (`del_depth: false`, а `false + 1 = 1` в JS и Python)
+    отвергается там (Давлятшин, Niyikiza, 2026-11-10). -/
 theorem t7_3c_redundant (P : Params) (anchors : List Anchor) (c : List Link) :
     verify P anchors c = verifyNo3c P anchors c := by
   cases c with

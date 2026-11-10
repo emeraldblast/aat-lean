@@ -29,7 +29,7 @@ All theorems hold for chains of any length. No `sorry`, `admit` or
 | T4 | Every link is valid at `now`, outlives no parent, and is issued no earlier than the root (I3) | `t4_ttl` |
 | T6 | Depth equals position; chain length ≤ `MAX_DELEGATION_DEPTH` + 1 (I2) | `t6_depth`, `t6_length` |
 | **T7** | Steps 4e, 4f and 5 never change a verdict: `verify` equals the algorithm without them, on all inputs | `t7_redundant` |
-| **T7′** | Step 3c is redundant too, given step 5 and 4d: 3c and step 5 are mutually redundant | `t7_3c_redundant` |
+| **T7′** | The value check of step 3c (root `del_depth` = 0) is redundant too, given step 5 and 4d: it and step 5 are mutually redundant. The integer check of 3c is not: in the model it is part of parsing (J.21.9, `del_depth: false`, is denied there) | `t7_3c_redundant` |
 | **T7″** | Step 4b5 (a derived token's `iss` and `par_hash` present and strings) never changes a verdict: 4c and 4q reject what it rejects, given non-empty key thumbprints | `t7_4b5_redundant` |
 | — | Claims parsing in the model (3b–3m, 4b–4n, 7b–7c): an accepted presentation parses into a chain and PoP that `invokeWithState` accepts, so T1–T9 apply to tokens as written | `invokeTokens_allow` |
 | T8 | Every `aud` in the chain names this enforcement point (6c) | `t8_aud` |
@@ -38,8 +38,8 @@ All theorems hold for chains of any length. No `sorry`, `admit` or
 
 T7 is a machine-checked confirmation of findings B9 and B10 in
 [Davliatshin's implementation report](https://datatracker.ietf.org/doc/draft-davliatshin-oauth-attenuation-chains-report/)
-and of the notes to §8. T7′ is the converse direction, not stated there; T7″
-(step 4b5) is not stated there either.
+and of the notes to §8. T7′ is the converse direction, not stated there; the
+suite's generator already records the redundancy of 4b5 that T7″ proves.
 
 ## Conformance with the author's vectors
 
@@ -58,7 +58,7 @@ duplicate names, NumericDate and integer claims, `jti`, `cnf.jwk`,
   all 54 PERMIT vectors; the PoP replay state matches on 3 of 3. Each of the 15
   header and size vectors is denied by those checks, each of the 32 parsing
   vectors at parsing, and each of the other 177 passes both.
-- The remaining 5 test inadmissible numbers (§3.4), left to assumption 5; the
+- The remaining 5 test inadmissible numbers (§3.4), left to assumption 6; the
   list is pinned in `vectors/scope.json`.
 
 ## Differential conformance testing
@@ -96,17 +96,21 @@ compares every verdict with the Lean model. The report groups disagreements by
 
 ## Assumptions
 
-1. Signatures cannot be forged; SHA-256 and `jwk_thumbprint_uri` are injective.
+The numbers are the ones used in the code, `vectors/scope.json` and
+`vectors/REPORT.md`.
+
+1. Signatures cannot be forged.
 2. The key of a trust anchor belongs to its stated issuer.
 3. The recipient executes exactly the bytes that were verified.
 4. A revocation snapshot is fresher than Δ (T5 only).
-5. All values are compared by JCS and every number is admissible (§3.4).
-6. The enforcement point allows only `alg` `Ed25519`, understands no `crit`
-   parameter, and rejects a JWS header with a repeated member name (RFC 7515
-   §4 permits rejecting).
-7. The enforcement point accepts only Ed25519 keys (as the vector suite does):
-   `cnf.jwk` "encodes a public key" when `kty` is `OKP`, `crv` is `Ed25519`,
-   `x` is 43 base64url characters and there is no `d` (steps 3l, 4b2).
+5. SHA-256 and `jwk_thumbprint_uri` are injective.
+6. All values are compared by JCS and every number is admissible (§3.4).
+7. Enforcement-point profile and byte level: only `alg` `Ed25519` and only
+   Ed25519 keys (`cnf.jwk` "encodes a public key" when `kty` is `OKP`, `crv`
+   is `Ed25519`, `x` is 43 base64url characters and there is no `d`; steps
+   3l, 4b2), no `crit` parameter understood, a JWS header with a repeated
+   member name rejected (RFC 7515 §4 permits it); a repeated member name
+   inside a nested call argument is left out of the model.
 
 ## Mutation test
 

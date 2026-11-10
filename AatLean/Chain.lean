@@ -25,8 +25,8 @@ import AatLean.CMap
 
 Подписи и хэш — идеальные (допущения 1 и 5): `sigBy` — ключи (отпечатки
 `jwk_thumbprint_uri`), под которыми подпись токена верна; `selfHash` —
-SHA-256 его JWS Signing Input. Байтовый уровень (размеры, `alg`/`typ`/`crit`,
-дубликаты JSON, форма `cnf.jwk`) — вне модели (допущение 7).
+SHA-256 его JWS Signing Input. Размеры, заголовки и разбор claims (дубликаты
+JSON, типы, форма `cnf.jwk`) — `Parse.lean`; `Link` — уже разобранное звено.
 -/
 
 namespace AAT
