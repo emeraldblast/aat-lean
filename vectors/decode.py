@@ -167,8 +167,15 @@ def signed_by(keys, msg, sig):
 
 
 def admissible(x):
-    """§3.4: the JCS serialization of the number's double denotes the same value."""
-    return Fraction(Decimal(repr(float(x)))) == Fraction(x)
+    """§3.4: the JCS serialization of the number's double denotes the same value.
+    A number beyond the double range has no such serialization: inadmissible."""
+    try:
+        f = float(x)
+    except OverflowError:
+        return False
+    if f in (float("inf"), float("-inf")):
+        return False
+    return Fraction(Decimal(repr(f))) == Fraction(x)
 
 
 def check_admissible(x):
@@ -251,7 +258,7 @@ def constraint(c, nested=False):
     if not isinstance(c, dict):
         return MALFORMED
     t = c.get("constraint_type")
-    if t not in MEMBERS:
+    if not isinstance(t, str) or t not in MEMBERS:
         return MALFORMED  # unknown type: fail-closed
     allowed = MEMBERS[t] | {"constraint_type"} | (set() if nested else {"optional"})
     if set(c) - allowed:

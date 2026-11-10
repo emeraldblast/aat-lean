@@ -101,14 +101,19 @@ _tags = itertools.count()
 
 
 def judge(cmd):
-    """For shrinking: (model verdict, implementation verdict) for each vector."""
+    """For shrinking: (model verdict, implementation verdict) for each vector.
+    A run with any error the main check counts — model coverage loss, a
+    non-zero exit of the implementation, a protocol error — decides nothing:
+    every vector of that batch gets None, so no candidate is kept on it."""
     def f(suite, vectors):
         path = OUT / "shrink-suite.json"
         doc = {k: suite[k] for k in suite if k != "vectors"}
         doc["vectors"] = vectors
         path.write_text(json.dumps(doc, ensure_ascii=False))
-        model, _, _ = oracle(path, f"shrink-{next(_tags)}")
-        impl, _, _, _ = run_impl(cmd, suite, vectors)
+        model, _, lost = oracle(path, f"shrink-{next(_tags)}")
+        impl, rc, _, protocol = run_impl(cmd, suite, vectors)
+        if lost or rc or protocol:
+            return {v["id"]: None for v in vectors}
         return {v["id"]: (model.get(v["id"]), impl.get(v["id"], {}).get("verdict", "NO ANSWER")) for v in vectors}
     return f
 
@@ -179,12 +184,15 @@ def main():
 
     # minimal reproducers for disagreements the model decides, dangerous ones first
     import shrink as shr
-    shrunk = []
+    shrunk, shrink_failed = [], []
     vec = {v["id"]: (up, v) for v in up["vectors"]}
     vec.update({v["id"]: (gen, v) for v in gen["vectors"]})
     for r in sorted((r for r in dis if r[4] == "model"), key=lambda r: (r[3] != "DENY", r[0]))[:a.shrink]:
         suite, v = vec[r[0]]
         small, target, steps = shr.shrink(suite, v, judge(a.impl))
+        if target is None:
+            shrink_failed.append(r[0])
+            continue
         path = OUT / f"min-{r[0]}.json"
         doc = {k: suite[k] for k in suite if k != "vectors"}
         doc["vectors"] = [small]
@@ -222,13 +230,17 @@ def main():
             L.append(f"| {r[0]} | {r[1]} | {r[2]} | {r[3]} ({r[4]}) | {r[5]} | {r[6]} |")
     else:
         L += ["Расхождений нет."]
+    if shrunk or shrink_failed:
+        L += ["", "## Минимальные воспроизводимые случаи", ""]
     if shrunk:
-        L += ["", "## Минимальные воспроизводимые случаи", "",
-              "| Вектор | Модель | Реализация | Звеньев | Байт: было → стало | Файл |", "|---|---|---|---|---|---|"]
+        L += ["| Вектор | Модель | Реализация | Звеньев | Байт: было → стало | Файл |", "|---|---|---|---|---|---|"]
         for i, t, b0, b1, nl, steps, path in shrunk:
             L.append(f"| {i} | {t[0]} | {t[1]} | {nl} | {b0} → {b1} | `{path.relative_to(ROOT)}` |")
         L += ["", "Каждый файл — набор в схеме авторских векторов из одного вектора; "
               "`python3 -I conformance/check.py` его не читает, но любой декодер набора — да."]
+    if shrink_failed:
+        L += ["", "Не уменьшены (повторный прогон дал ошибку модели или реализации): "
+              + ", ".join(shrink_failed)]
     L += ["", "## Как воспроизвести", "",
           f"`python3 -I conformance/check.py --impl \"{a.impl}\" --seed {a.seed} --count {a.count}`"]
     if lost:

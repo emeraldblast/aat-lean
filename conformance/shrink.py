@@ -149,6 +149,9 @@ def shrink(suite, v, judge, log=print):
     smallest vector found with the same pair as `v`, and the steps taken."""
     target = judge(suite, [v]).get(v["id"])
     steps = []
+    if target is None:
+        # the original disagreement does not reproduce cleanly: nothing to shrink against
+        return v, None, steps
     for _ in range(MAX_ROUNDS):
         ws = []
         for c in candidates(v):
@@ -161,7 +164,7 @@ def shrink(suite, v, judge, log=print):
         if not ws:
             break
         got = judge(suite, ws)
-        keep = [w for w in ws if got.get(w["id"]) == target]
+        keep = [w for w in ws if got.get(w["id"]) is not None and got[w["id"]] == target]
         if not keep:
             break
         best = min(keep, key=size)
