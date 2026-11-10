@@ -1,6 +1,7 @@
 """Generate signed AAT-02 chains beyond the author's suite.
 
-Chains of 1..4 tokens over all nine constraint types: children usually narrow
+Chains of 1..MAX_DELEGATION_DEPTH+1 tokens (9 with the suite's parameters) over all
+nine constraint types: children usually narrow
 their parent, sometimes deliberately widen it; one mutation per vector breaks a
 §8 step (signature, par_hash, depth, time, jti, aud, PoP) or the call. The
 generator does not decide the verdict: the Lean model does (conformance/check.py).
@@ -22,13 +23,20 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 SUITE = json.load(open(ROOT / "vectors/upstream/aat-jws-vectors.json"))
 KEYS = SUITE["keys"]
 ANCHOR_ISS = SUITE["trust_anchors"][0]["iss"]   # key: control_plane
-HOLDERS = ["orchestrator", "worker", "worker2", "orchestrator"]
+# Holder keys cycle along the chain: a key may hold several tokens of one chain
+# (notes to §8), but never its own parent's token.
+CYCLE = ["orchestrator", "worker", "worker2"]
+
+
+def holders_for(n):
+    return [CYCLE[i % len(CYCLE)] for i in range(n)]
 TOOLS = ["read_file", "search_index", "pay"]
 ARGS = ["path", "query", "limit", "amount", "tags"]
 STRS = ["a", "b", "c", "d", "/data/q3.pdf", "/data/q4.pdf"]
 HDR = {"alg": "Ed25519", "typ": "aat+jwt"}
 POP_HDR = {"alg": "Ed25519", "typ": "aat-pop+jwt"}
 P = SUITE["params"]
+MAXD = P["max_delegation_depth"]
 NOW = P["now"]
 
 MUTATIONS = [
@@ -40,7 +48,7 @@ MUTATIONS = [
     "child-outlives-parent", "expired", "iat-future", "child-iat-before-parent",
     "aud-other", "pop-tool", "pop-hta", "pop-sig-attacker", "pop-iat-old", "pop-aat-id",
     "call-violates", "call-unknown-tool", "call-extra-arg", "call-missing-arg", "call-dup-arg",
-    "range-edge-child", "call-at-exclusive-bound",
+    "range-edge-child", "call-at-exclusive-bound", "chain-too-deep",
 ]
 
 # exclusive-bound edge cases: what a verifier that ignores min_inclusive/max_inclusive gets wrong
@@ -198,7 +206,12 @@ def aat(tools):
 
 
 def build(r, seed, n_links, mutation):
-    holders = HOLDERS[:n_links]
+    holders = holders_for(n_links)
+    # del_max_depth: non-increasing (4g), never below the leaf depth (4m, step 5), at most MAX (3i)
+    floor = min(max(n_links - 1, 3), MAXD)
+    dmds = [r.randint(floor, MAXD)]
+    for _ in range(1, n_links):
+        dmds.append(r.randint(floor, dmds[-1]))
     root_tools = ({t: rnd_map(r) for t in r.sample(TOOLS, r.randint(1, 3))}
                   if mutation not in ("range-edge-child", "call-at-exclusive-bound") else copy.deepcopy(EDGE_PARENT))
     toolsets = [root_tools]
@@ -243,7 +256,7 @@ def build(r, seed, n_links, mutation):
     for i in range(n_links):
         holder = holders[i]
         p = {"jti": jti(seed, i), "iat": iat0 + 10 * i, "exp": exp0 - 100 * i,
-             "del_depth": i, "del_max_depth": 3 if i == 0 else max(i, 3),
+             "del_depth": i, "del_max_depth": dmds[i],
              "cnf": {"jwk": KEYS[holder]["jwk"]}, "authorization_details": aat(toolsets[i])}
         if i == 0:
             p["iss"] = ANCHOR_ISS
@@ -289,7 +302,10 @@ NEEDS_CHILD = {"range-edge-child", "child-widens-tool", "child-widens-constraint
 
 def make_vector(r, seed, idx):
     mutation = r.choice(MUTATIONS)
-    n_links = r.randint(2 if mutation in NEEDS_CHILD else 1, 4)
+    if mutation == "chain-too-deep":
+        n_links = MAXD + 2  # leaf depth MAX + 1: exceeds every del_max_depth (4m) and MAX (4f)
+    else:
+        n_links = r.randint(2 if mutation in NEEDS_CHILD else 1, MAXD + 1)
     chain, payloads, toolsets = build(r, seed, n_links, mutation)
     leaf_tools = toolsets[-1]
     tool = r.choice(list(leaf_tools))
@@ -319,7 +335,7 @@ def make_vector(r, seed, idx):
     pop = {"jti": jti(seed, 1000), "iat": NOW, "aat_id": payloads[-1]["jti"],
            "aat_hash": leaf["signing_input_sha256_b64u"], "aat_tool": tool, "hta": args,
            "aat_aud": SUITE["params"]["audience"]}
-    pop_signer = HOLDERS[n_links - 1]
+    pop_signer = holders_for(n_links)[-1]
     if mutation == "pop-tool": pop["aat_tool"] = tool + "_other"
     if mutation == "pop-hta": pop["hta"] = dict(args, extra_pop="x")
     if mutation == "pop-iat-old": pop["iat"] = NOW - P["pop_window"] - 10

@@ -5,7 +5,7 @@
 
 Exit status 0 only when every verdict agrees, every vector got a model verdict
 (no coverage loss) and the implementation exited cleanly. Disagreements on which
-the model is the reference are shrunk to minimal vectors (conformance/shrink.py).
+the model is the reference are shrunk greedily to smaller vectors (conformance/shrink.py).
 
 Inputs: the author's 229 vectors plus COUNT generated chains (conformance/generate.py).
 Oracle: the Lean model (`lake exe aat-run`) — the same function T1–T9 are proved
@@ -182,7 +182,7 @@ def main():
     too_lax = [r for r in dis if r[3] == "DENY" and r[5] == "PERMIT"]
     too_strict = [r for r in dis if r[3] == "PERMIT" and r[5] == "DENY"]
 
-    # minimal reproducers for disagreements the model decides, dangerous ones first
+    # smaller reproducers for disagreements the model decides, dangerous ones first
     import shrink as shr
     shrunk, shrink_failed = [], []
     vec = {v["id"]: (up, v) for v in up["vectors"]}
@@ -231,7 +231,8 @@ def main():
     else:
         L += ["Расхождений нет."]
     if shrunk or shrink_failed:
-        L += ["", "## Минимальные воспроизводимые случаи", ""]
+        L += ["", "## Уменьшенные воспроизводимые случаи", "",
+              "Жадное уменьшение (не более 40 раундов): меньше исходного, но не обязательно минимально.", ""]
     if shrunk:
         L += ["| Вектор | Модель | Реализация | Звеньев | Байт: было → стало | Файл |", "|---|---|---|---|---|---|"]
         for i, t, b0, b1, nl, steps, path in shrunk:

@@ -1,4 +1,4 @@
-"""Shrink a disagreement to a minimal reproducible vector.
+"""Shrink a disagreement to a smaller reproducible vector (greedy, not necessarily minimal).
 
 Given a vector on which the implementation and the Lean model disagree, try
 smaller variants (fewer links, tools, constraint entries, list members and call

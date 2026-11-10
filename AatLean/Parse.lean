@@ -177,8 +177,8 @@ def parseLinkCore (isRoot : Bool) (t : RawToken) : Option Link := do
   let l ← parseFields isRoot t
   pure { l with holder, issuer := issOf t, parHash := parHashOf isRoot t }
 
-/-- Шаг 4b5 для производного: `iss` и `par_hash` присутствуют и строки
-    (`iat`, `exp` — в `parseFields`). -/
+/-- Часть шага 4b5 для производного: `iss` и `par_hash` присутствуют и строки.
+    Другая часть 4b5 — `iat`, `exp` как NumericDate — в `parseFields`. -/
 def check4b5 (isRoot : Bool) (t : RawToken) : Bool :=
   isRoot || ((t.payload.field "iss" >>= JVal.asStr).isSome &&
              (t.payload.field "par_hash" >>= JVal.asStr).isSome)
@@ -414,8 +414,9 @@ theorem allPairs_of_verify {P : Params} {anchors : List Anchor} {c : List Link}
     (hv : verify P anchors c = .allow) : allPairs (pairOk P) c = true :=
   (allPairs_iff (pairOk P) c).mpr (fun i hi => pair_of_allow hv i hi)
 
-/-- **Т7″.** Шаг 4b5 (`iss` и `par_hash` производного присутствуют и строки)
-    не меняет ни одного вердикта, если отпечатки ключей непусты: без `iss`
+/-- **Т7″.** Проверка `iss`/`par_hash` из шага 4b5 (присутствуют и строки у
+    производного; проверка NumericDate `iat`/`exp` из 4b5 сюда не входит) не
+    меняет ни одного вердикта, если отпечатки ключей непусты: без `iss`
     отказывает 4c (`iss` = отпечаток ключа родителя), без `par_hash` — 4q. -/
 theorem t7_4b5_redundant (P : Params) (E : Endpoint) (anchors : List Anchor) (raw : List RawToken)
     (call : Call) (rp : RawPoP) (seen : List String) (hk : ∀ t ∈ raw, t.thumb ≠ some "") :

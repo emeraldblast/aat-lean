@@ -30,7 +30,7 @@ All theorems hold for chains of any length. No `sorry`, `admit` or
 | T6 | Depth equals position; chain length ≤ `MAX_DELEGATION_DEPTH` + 1 (I2) | `t6_depth`, `t6_length` |
 | **T7** | Steps 4e, 4f and 5 never change a verdict: `verify` equals the algorithm without them, on all inputs | `t7_redundant` |
 | **T7′** | The value check of step 3c (root `del_depth` = 0) is redundant too, given step 5 and 4d: it and step 5 are mutually redundant. The integer check of 3c is not: in the model it is part of parsing (J.21.9, `del_depth: false`, is denied there) | `t7_3c_redundant` |
-| **T7″** | Step 4b5 (a derived token's `iss` and `par_hash` present and strings) never changes a verdict: 4c and 4q reject what it rejects, given non-empty key thumbprints | `t7_4b5_redundant` |
+| **T7″** | The `iss`/`par_hash` check of step 4b5 (a derived token's `iss` and `par_hash` present and strings; the `iat`/`exp` NumericDate check of 4b5 is not covered) never changes a verdict: 4c and 4q reject what it rejects, given non-empty key thumbprints | `t7_4b5_redundant` |
 | — | Claims parsing in the model (3b–3m, 4b–4n, 7b–7c): an accepted presentation parses into a chain and PoP that `invokeWithState` accepts, so T1–T9 apply to tokens as written | `invokeTokens_allow` |
 | T8 | Every `aud` in the chain names this enforcement point (6c) | `t8_aud` |
 | T9 | The PoP is signed by the leaf holder's key and binds the leaf, tool, arguments and time window (step 7, I6); a replayed PoP is rejected | `t9_pop`, `t9_replay` |
@@ -70,16 +70,20 @@ python3 -I conformance/check.py --impl "COMMAND" --seed 1 --count 300
 ```
 
 It runs `COMMAND` (a JSON-lines protocol, see `conformance/check.py`) on the 229
-author vectors plus generated signed chains (`conformance/generate.py`: 1–4 tokens,
-all nine constraint types, one mutation per vector against a §8 step), and
+author vectors plus generated signed chains (`conformance/generate.py`: 1 to
+`MAX_DELEGATION_DEPTH` + 1 tokens, plus chains one token too deep; all nine
+constraint types; one mutation per vector against a §8 step), and
 compares every verdict with the Lean model. The report groups disagreements by
 §8 step and separates the dangerous ones (model DENY, implementation PERMIT).
 
-- **Minimal reproducers.** Each disagreement the model decides is shrunk
-  (`conformance/shrink.py`): links, tools, constraint entries, list members and
-  call arguments are removed, constraints replaced by `wildcard`, and the chain
-  re-signed with the original signers, for as long as the same disagreement
-  survives. The result is a one-vector suite in the author's schema.
+- **Smaller reproducers.** Disagreements on which the model is the reference
+  (the first `--shrink N`, default 3, dangerous ones first) are shrunk
+  greedily (`conformance/shrink.py`, at most 40 rounds): links, tools,
+  constraint entries, list members and call arguments are removed,
+  constraints replaced by `wildcard`, and the chain re-signed with the
+  original signers, for as long as the same disagreement survives. The
+  result is a smaller one-vector suite in the author's schema, not
+  necessarily a minimal one.
 - **No silent coverage loss.** The check fails if any vector does not get a
   model verdict, if the implementation exits with an error, or if the set of
   author vectors outside the model differs from `vectors/scope.json`.
