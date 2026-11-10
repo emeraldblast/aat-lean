@@ -57,12 +57,11 @@ class _Obj(list):
 
 def load_args(s):
     """Top-level argument pairs. Duplicate top-level names are kept: step 6b
-    must see them. Nested objects become dicts recursively; a duplicate name
-    inside a nested object is outside the model (assumption 7)."""
+    must see them. Nested objects become dicts recursively (a repeated nested
+    name: the last value; the model denies such a call from the tree as
+    written, `call.tree`, before it reads any value)."""
     def nested(x):
         if isinstance(x, _Obj):
-            if len({k for k, _ in x}) != len(x):
-                raise OutOfScope("precondition: duplicate JSON member names in a nested argument (assumption 7)")
             return {k: nested(v) for k, v in x}
         if isinstance(x, list):
             return [nested(e) for e in x]
@@ -463,7 +462,8 @@ def _decode(suite):
                            "maxChainSize": params["max_chain_size"]},
                 "anchors": anchors,
                 "chain": chain,
-                "call": {"tool": v["tool"], "args": [[k, value(x)] for k, x in args]},
+                "call": {"tool": v["tool"], "args": [[k, value(x)] for k, x in args],
+                         "tree": enc(tree(v["args_json"]))},
             }
             rec["scope"] = "in"
         except OutOfScope as e:

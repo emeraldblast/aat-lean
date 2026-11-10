@@ -45,7 +45,8 @@ suite's generator already records the redundancy of 4b5 that T7″ proves.
 
 `python3 -I vectors/run.py` decodes the suite (`vectors/upstream`, byte-identical
 to tenuo-ai/tenuo at `99fb009`), checks Ed25519 signatures with OpenSSL, and runs
-`invokeTokens` (`lake exe aat-run`): the model checks token and chain sizes
+`invokeCall` (`lake exe aat-run`): the model rejects a repeated member name
+at any depth of the call arguments as written (step 6b), checks token and chain sizes
 and every JWS header (steps 2a, 2b, 3a, 4a, 7a: `alg`, `typ`, `crit`), reads
 each signed payload as written — a JSON tree with repeated member names and
 number literals — parses the claims itself (steps 3b–3m, 4b–4n, 7b–7c:
@@ -115,13 +116,12 @@ The numbers are the ones used in the code, `vectors/scope.json` and
    3l, 4b2; an Ed25519 signature is attributed only to keys with `crv`
    `Ed25519`), the root `iss` a URI in a minimal sense (an RFC 3986 scheme,
    `:`, only URI characters; step 3k), no `crit` parameter understood, a JWS header with a repeated
-   member name rejected (RFC 7515 §4 permits it); a repeated member name
-   inside a nested call argument is left out of the model.
+   member name rejected (RFC 7515 §4 permits it).
 
 ## Mutation test
 
 `python3 review/mutate.py` mutates each check of the verifier and confirms that
-some kernel-checked `example` fails. 129 mutations are caught. Exactly five
+some kernel-checked `example` fails. 133 mutations are caught. Exactly five
 survive — steps 3c, 4e, 4f, 5 and 4b5 — which is what T7, T7′ and T7″ predict:
 no input can distinguish them.
 
@@ -134,7 +134,7 @@ no input can distinguish them.
 | `AatLean/Chain.lean` | Tokens, `Permits`, `Narrows`, step 4p, T1 core |
 | `AatLean/Verify.lean` | §8 steps 1–6b, T1–T4, T6, T7 |
 | `AatLean/Invoke.lean` | Steps 6c and 7 with state, T8, T9 |
-| `AatLean/Parse.lean` | Claims parsing (3b–3m, 4b–4n, 7b–7c) over JSON as written; `invokeTokens` |
+| `AatLean/Parse.lean` | Sizes, headers, claims parsing (2a–3m, 4a–4n, 7a–7c) and argument duplicates (6b) over JSON as written; `invokeTokens`, `invokeCall` |
 | `AatLean/Extension/Revocation.lean` | T5 |
 | `Runner.lean`, `vectors/` | Vector decoder, runner, report |
 | `conformance/` | Differential conformance testing of other verifiers |

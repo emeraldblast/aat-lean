@@ -279,6 +279,9 @@ SUITES = {
                 "  s.toList.all uriChar &&\n", ""),
             "isUri: scheme not checked": (
                 "   | c :: cs => c.isAlpha && schemeRest cs\n", "   | _ :: _ => true\n"),
+            "6b: nested duplicate argument names ignored": (
+                "  if rc.args.noDup then invokeTokens P E anchors raw rc.call rp seen else (.deny, seen)",
+                "  invokeTokens P E anchors raw rc.call rp seen"),
             "7c: PoP iat optional": (
                 '  let iat ← p.field "iat" >>= JVal.asInt                             -- 7c',
                 '  let iat := (p.field "iat" >>= JVal.asInt).getD 50'),

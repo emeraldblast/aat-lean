@@ -286,6 +286,20 @@ def invokeTokens (P : Params) (E : Endpoint) (anchors : List Anchor) (raw : List
     | _, _ => (.deny, seen)
   else (.deny, seen)
 
+/-- Вызов как записан: `call` — инструмент и аргументы верхнего уровня
+    (значения по JCS — снаружи, допущение 6); `args` — объект аргументов,
+    как он записан в вызове. -/
+structure RawCall where
+  call : Call
+  args : JVal
+
+/-- Шаг 6b, дубликаты: «If any JSON object in args, as written in the
+    invocation, has duplicate member names, DENY» — на любой глубине; затем
+    `invokeTokens`. -/
+def invokeCall (P : Params) (E : Endpoint) (anchors : List Anchor) (raw : List RawToken)
+    (rc : RawCall) (rp : RawPoP) (seen : List String) : Decision × List String :=
+  if rc.args.noDup then invokeTokens P E anchors raw rc.call rp seen else (.deny, seen)
+
 /-! ## Перенос теорем -/
 
 /-- Если `invokeTokens` разрешил вызов, то токены разобраны в цепочку и PoP,
@@ -304,6 +318,19 @@ theorem invokeTokens_allow {P : Params} {E : Endpoint} {anchors : List Anchor}
       exact ⟨chain, pop, hc, hp, h⟩
     · simp at h
   · simp [hf] at h
+
+/-- Если `invokeCall` разрешил вызов, то в аргументах, как они записаны, нет
+    повторов имён ни на какой глубине, и `invokeTokens` разрешает тот же вызов —
+    поэтому действует `invokeTokens_allow`, а с ней Т1–Т9. -/
+theorem invokeCall_allow {P : Params} {E : Endpoint} {anchors : List Anchor}
+    {raw : List RawToken} {rc : RawCall} {rp : RawPoP} {seen : List String}
+    (h : (invokeCall P E anchors raw rc rp seen).1 = .allow) :
+    rc.args.noDup = true ∧ (invokeTokens P E anchors raw rc.call rp seen).1 = .allow := by
+  unfold invokeCall at h
+  by_cases hd : rc.args.noDup = true
+  · simp only [hd, ite_true] at h
+    exact ⟨hd, h⟩
+  · simp [hd] at h
 
 /-- `invokeTokens` без шага 4b5. -/
 def invokeTokensCore (P : Params) (E : Endpoint) (anchors : List Anchor) (raw : List RawToken)
@@ -615,6 +642,14 @@ example : isUri "not a URI" = false := by decide +kernel
 example : isUri ":x" = false := by decide +kernel
 example : isUri "1a:b" = false := by decide +kernel
 example : isUri "https://a b" = false := by decide +kernel
+-- 6b: повтор имени в аргументах на любой глубине (`callT` — `amount: 50`)
+def runCall (args : JVal) : Decision :=
+  (invokeCall PT ET anchorsUT [rootRawT, childRawT] ⟨callT, args⟩ popRawT []).1
+example : runCall (.obj [("amount", .num "50")]) = .allow := by decide +kernel
+example : runCall (.obj [("amount", .num "50"), ("meta", .obj [("a", .null), ("a", .null)])]) = .deny := by
+  decide +kernel
+example : runCall (.obj [("amount", .num "50"), ("tags", .arr [.obj [("b", .null), ("b", .null)]])]) = .deny := by
+  decide +kernel
 -- 3d: par_hash у корня, даже не строка
 example : runT (withRoot (·.set "par_hash" (.null))) childRawT = .deny := by decide +kernel
 

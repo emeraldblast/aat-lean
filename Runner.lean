@@ -5,7 +5,7 @@ import Lean.Data.Json
 # Прогон модели на векторах
 
 Читает `vectors/out/model-input.json` (вывод `vectors/decode.py`) и для каждого
-вектора в зоне модели печатает `id<TAB>PERMIT|DENY` — вердикт `invokeTokens`:
+вектора в зоне модели печатает `id<TAB>PERMIT|DENY` — вердикт `invokeCall`: повторы имён в аргументах (6b),
 разбор claims в Lean, затем `invokeWithState`, о которой доказаны Т1–Т9
 (`invokeTokens_allow`). Несогласованный вход декодера — `ERROR`.
 -/
@@ -131,6 +131,7 @@ def runOne (j : Json) : Except String (Decision × List String × String) := do
   let chain ← (← (← j.getObjVal? "chain").getArr?).toList.mapM rawToken
   let call ← j.getObjVal? "call"
   let callV : Call := ⟨← str call "tool", ← argsOf (← call.getObjVal? "args")⟩
+  let rc : RawCall := ⟨callV, ← jval (← call.getObjVal? "tree")⟩
   let q ← j.getObjVal? "pop"
   let popPayload ← jval (← q.getObjVal? "payload")
   let hta ← match q.getObjVal? "hta" with
@@ -144,11 +145,12 @@ def runOne (j : Json) : Except String (Decision × List String × String) := do
                        sigBy := ← strs (← q.getObjVal? "sigBy"), hta }
   let seen ← strs (← j.getObjVal? "seen")
   -- диагностика: где остановился разбор (для отчёта, не для вердикта)
-  let stage := if !framesOk P chain rp then "frames" else match parseChain chain, parsePoP rp with
+  let stage := if !rc.args.noDup then "args" else if !framesOk P chain rp then "frames" else
+    match parseChain chain, parsePoP rp with
     | none, _ => "parse-chain"
     | _, none => "parse-pop"
     | _, _ => "parsed"
-  let (d, st) := invokeTokens P E anchors chain callV rp seen
+  let (d, st) := invokeCall P E anchors chain rc rp seen
   pure (d, st, stage)
 
 def main (argv : List String) : IO UInt32 := do

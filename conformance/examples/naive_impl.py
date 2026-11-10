@@ -242,6 +242,7 @@ def verify(P, anchors, chain):
 
 def invoke(x):
     P, E, raw, call = x["params"], x["endpoint"], x["chain"], x["call"]
+    if not no_dup(call["tree"]): return False  # 6b: repeated names at any depth
     sizes = [t["size"] for t in raw]
     if any(n > P["maxTokenSize"] for n in sizes) or sum(sizes) > P["maxChainSize"]: return False
     if not all(header_ok(t["header"], "aat+jwt") for t in raw) or not header_ok(x["pop"]["header"], "aat-pop+jwt"):
