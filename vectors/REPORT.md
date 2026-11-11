@@ -1,7 +1,7 @@
 # Прогон Lean-модели на векторах AAT-02
 
 Набор: `vectors/upstream/aat-jws-vectors.json` (229 векторов).
-В зоне модели: **224**; совпало **224 из 224**.
+В зоне модели: **229**; совпало **229 из 229**.
 Состояние σ после вызова (PoP `jti`) сверено на 3 векторах: совпало 3.
 
 ## В зоне модели по ожидаемому шагу
@@ -25,7 +25,7 @@
 | DENY | 3k | 2 |
 | DENY | 3l | 2 |
 | DENY | 3m | 4 |
-| DENY | 3n | 17 |
+| DENY | 3n | 18 |
 | DENY | 4a | 3 |
 | DENY | 4b | 3 |
 | DENY | 4b1 | 1 |
@@ -50,14 +50,14 @@
 | DENY | 4p3 | 1 |
 | DENY | 4p4 | 24 |
 | DENY | 4q | 2 |
-| DENY | 6b | 24 |
+| DENY | 6b | 27 |
 | DENY | 6c | 4 |
 | DENY | 7a | 4 |
 | DENY | 7b | 2 |
 | DENY | 7c | 5 |
 | DENY | 7d | 3 |
 | DENY | 7e | 1 |
-| DENY | 7f | 2 |
+| DENY | 7f | 3 |
 | DENY | 7g | 2 |
 | DENY | 7h | 2 |
 | DENY | 7i | 1 |
@@ -71,4 +71,3 @@
 
 | Причина | Векторов |
 |---|---|
-| precondition: inadmissible number (assumption 6) | 5 |

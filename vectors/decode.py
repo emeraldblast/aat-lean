@@ -194,7 +194,7 @@ def check_admissible(x):
         return
     if isinstance(x, (int, Decimal)):
         if not admissible(x):
-            raise OutOfScope("precondition: inadmissible number (assumption 6)")
+            raise OutOfScope("precondition: inadmissible number inside a nested value (assumption 6)")
     elif isinstance(x, list):
         for e in x:
             check_admissible(e)
@@ -238,11 +238,10 @@ def scalar(x):
     if x is None:
         return {"null": True}
     if is_num(x):
-        check_admissible(x)
-        return {"num": num(x)}
+        return {"num": num(x)}  # exact value; the model checks admissibility (§3.4)
     if isinstance(x, str):
         return {"str": x}
-    check_admissible(x)
+    check_admissible(x)  # numbers inside a JCS string are invisible to the model (assumption 6)
     return {"compound": jcs(x)}
 
 
@@ -300,7 +299,6 @@ def constraint(c, nested=False):
             if side in c:
                 if not is_num(c[side]):
                     return MALFORMED
-                check_admissible(c[side])
                 out[side] = {"val": num(c[side]), "incl": bool(c.get(flag, True))}
             else:
                 out[side] = None

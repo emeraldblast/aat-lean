@@ -20,6 +20,14 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUT = ROOT / "conformance/out"
 
+# The fixture's three bugs, and nothing else, may show up as dangerous
+# disagreements. Author vectors (the suite is byte-fixed): exactly these.
+NAIVE_AUTHOR = {"J.6.9", "J.6.10", "J.6.11", "J.12", "J.12.b", "J.17.8", "J.19.13",
+                "J.26.8", "J.26.9", "J.27.5"}
+# Generated chains: only mutations that hit range inclusivity, par_hash or chain aud.
+NAIVE_MUTATIONS = {"range-edge-child", "call-at-exclusive-bound", "par-hash-wrong",
+                   "par-hash-other-parent", "aud-other"}
+
 
 def run(impl, count, tag):
     summary = OUT / f"selftest-{tag}.json"
@@ -51,6 +59,12 @@ def main():
         failures.append(f"naive fixture: no summary (exit {rc})")
     else:
         bad = {k: s[k] for k in ("spurious_denials", "no_answer", "protocol_errors", "coverage_loss") if s[k]}
+        gen = {v["id"]: v for v in json.load(open(OUT / "gen-1.json"))["vectors"]}
+        def expected(i):
+            return gen[i]["mutation"] in NAIVE_MUTATIONS if i in gen else i in NAIVE_AUTHOR
+        stray = [i for i in s["dangerous"] if not expected(i)]
+        if stray:
+            bad["dangerous outside the fixture's three bugs"] = stray
         if rc != 1 or s["ok"] or not s["dangerous"] or bad or s["impl_exit"]:
             failures.append(f"naive fixture: exit {rc}, dangerous {len(s['dangerous'])}, "
                             f"impl exit {s['impl_exit']}, {bad}")

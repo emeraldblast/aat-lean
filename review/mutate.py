@@ -178,7 +178,7 @@ SUITES = {
             '7e: tool not compared': ('  pop.aatTool == call.tool &&', '  true &&'),
             '7f: hta not compared': ('   | some h => htaEq h call.args\n', '   | some _ => true\n'),
             '7f: missing hta allowed': ('   | none   => false) &&\n  decide', '   | none   => true) &&\n  decide'),
-            '7f: hta only subset of args': ('  hta.length == args.length && hta.all args.contains', '  hta.all args.contains'),
+            '7f: hta only subset of args': ('  hta.length == args.length &&\n', ''),
             '7g: lower window bound': ('  decide (now - E.popWindow ≤ pop.iat) && decide', '  decide'),
             '7g: upper window bound': ('decide (pop.iat ≤ now + E.popWindow) &&', 'true &&'),
             '7g: exclusive window': ('decide (now - E.popWindow ≤ pop.iat)', 'decide (now - E.popWindow < pop.iat)'),
@@ -280,11 +280,43 @@ SUITES = {
             "isUri: scheme not checked": (
                 "   | c :: cs => c.isAlpha && schemeRest cs\n", "   | _ :: _ => true\n"),
             "6b: nested duplicate argument names ignored": (
-                "  if rc.args.noDup then invokeTokens P E anchors raw rc.call rp seen else (.deny, seen)",
-                "  invokeTokens P E anchors raw rc.call rp seen"),
+                "  if rc.args.noDup then\n", "  if true then\n"),
+            "6b: argument numbers not checked (§3.4)": (
+                "    if rc.call.args.all (fun (_, v) => v.admissible) then             -- 6b (§3.4)\n",
+                "    if true then\n"),
+            "3n/4o: constraint numbers not checked (§3.4)": (
+                "  guard (tools.all (fun (_, m) => m.named.all (fun (_, e) => e.c.admissible)))  -- 3n, 4o (§3.4)\n", ""),
+            "7f: hta numbers not checked (§3.4)": (
+                "  guard ((hta.getD []).all (fun (_, v) => v.admissible))           -- 7f (§3.4)\n", ""),
             "7c: PoP iat optional": (
                 '  let iat ← p.field "iat" >>= JVal.asInt                             -- 7c',
                 '  let iat := (p.field "iat" >>= JVal.asInt).getD 50'),
+        },
+    ),
+    "AatLean/Number.lean": (
+        [],
+        {
+            "§3.4: ties round up": (
+                "else if f % 2 == 0 then f else f + 1", "else f + 1"),
+            "§3.4: no subnormal floor": (
+                "max (log2Floor a - 52) (-1074)", "log2Floor a - 52"),
+            "§3.4: no overflow": (
+                "if pow2 1024 ≤ (m : Rat) * pow2 e then none else some (m, e)", "some (m, e)"),
+            "§3.4: no half gap below a power of two": (
+                "if m == 2 ^ 52 && -1074 < e then pow2 (e - 2) else pow2 (e - 1)", "pow2 (e - 1)"),
+            "§3.4: rounding interval always closed": (
+                "let closed := m % 2 == 0", "let closed := true"),
+            "§3.4: rounding interval always open": (
+                "let closed := m % 2 == 0", "let closed := false"),
+            "§3.4: one decimal exponent only": (
+                "[dexp - k, dexp - k + 1, dexp - k + 2]", "[dexp - k + 1]"),
+            "§3.4: 2^53 not renormalised": (
+                "if m == 2 ^ 53 then (2 ^ 52, e + 1) else (m, e)", "(m, e)"),
+            "§3.4: zero not admissible": (
+                "if x == 0 then true", "if x == 0 then false"),
+            "§3.4: sign not dropped": (
+                "let a := if x < 0 then -x else x\n    match toDouble a with\n    | none => false",
+                "let a := x\n    match toDouble a with\n    | none => false"),
         },
     ),
 }

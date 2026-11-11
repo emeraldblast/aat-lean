@@ -55,12 +55,17 @@ duplicate names, NumericDate and integer claims, `jti`, `cnf.jwk`,
 **same `invokeWithState` function the theorems are about**. Result
 ([vectors/REPORT.md](vectors/REPORT.md)):
 
-- 224 of 229 vectors are in the model's scope; **224 of 224 agree**, including
-  all 54 PERMIT vectors; the PoP replay state matches on 3 of 3. Each of the 15
+- **All 229 vectors are in the model's scope and all 229 agree**, including all
+  54 PERMIT vectors; the PoP replay state matches on 3 of 3. Each of the 15
   header and size vectors is denied by those checks, each of the 32 parsing
-  vectors at parsing, and each of the other 177 passes both.
-- The remaining 5 test inadmissible numbers (§3.4), left to assumption 6; the
-  list is pinned in `vectors/scope.json`.
+  vectors at parsing, and each of the 5 inadmissible-number vectors by the
+  admissibility check of §3.4; `vectors/scope.json` (pinned) lists none out of
+  scope.
+- Number admissibility (§3.4) is computed in the model (`AatLean/Number.lean`):
+  correctly rounded IEEE 754 binary64, then the shortest ECMAScript form that
+  JCS writes. It agrees with Python's `float`/`repr` on 194 860 numbers, random
+  and targeted at powers of 2 and 10. `hta` is compared with the arguments by
+  JCS (step 7f), so 6b and 7f each reject inadmissible numbers on their own.
 
 ## Differential conformance testing
 
@@ -109,7 +114,9 @@ The numbers are the ones used in the code, `vectors/scope.json` and
 3. The recipient executes exactly the bytes that were verified.
 4. A revocation snapshot is fresher than Δ (T5 only).
 5. SHA-256 and `jwk_thumbprint_uri` are injective.
-6. All values are compared by JCS and every number is admissible (§3.4).
+6. Numbers nested inside array or object values reach the model as a JCS
+   string computed outside it, and are assumed admissible (§3.4). Every other
+   number is checked in the model.
 7. Enforcement-point profile and byte level: only `alg` `Ed25519` and only
    Ed25519 keys (`cnf.jwk` "encodes a public key" when `kty` is `OKP`, `crv`
    is `Ed25519`, `x` is 43 base64url characters and there is no `d`; steps
@@ -121,7 +128,7 @@ The numbers are the ones used in the code, `vectors/scope.json` and
 ## Mutation test
 
 `python3 review/mutate.py` mutates each check of the verifier and confirms that
-some kernel-checked `example` fails. 133 mutations are caught. Exactly five
+some kernel-checked `example` fails. 146 mutations are caught. Exactly five
 survive — steps 3c, 4e, 4f, 5 and 4b5 — which is what T7, T7′ and T7″ predict:
 no input can distinguish them.
 
@@ -134,6 +141,7 @@ no input can distinguish them.
 | `AatLean/Chain.lean` | Tokens, `Permits`, `Narrows`, step 4p, T1 core |
 | `AatLean/Verify.lean` | §8 steps 1–6b, T1–T4, T6, T7 |
 | `AatLean/Invoke.lean` | Steps 6c and 7 with state, T8, T9 |
+| `AatLean/Number.lean` | Number admissibility (§3.4): binary64 rounding and the shortest JCS form; JCS value |
 | `AatLean/Parse.lean` | Sizes, headers, claims parsing (2a–3m, 4a–4n, 7a–7c) and argument duplicates (6b) over JSON as written; `invokeTokens`, `invokeCall` |
 | `AatLean/Extension/Revocation.lean` | T5 |
 | `Runner.lean`, `vectors/` | Vector decoder, runner, report |

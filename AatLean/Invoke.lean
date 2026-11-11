@@ -1,4 +1,5 @@
 import AatLean.Verify
+import AatLean.Number
 
 /-!
 # Вызов целиком: `aud` (шаг 6c, Т8) и proof of possession (шаг 7, Т9)
@@ -7,8 +8,9 @@ import AatLean.Verify
 (шаг 7i) — «outside the inputs of this algorithm» (§8), поэтому оно в обёртке
 `invokeWithState`, которая возвращает вердикт и новое состояние.
 
-Вне модели: допустимость чисел в `hta` (допущение 6). Заголовок PoP (7a) и
-разбор PoP JWT (7b–7c) — `Parse.lean`.
+Заголовок PoP (7a), разбор PoP JWT (7b–7c) и допустимость чисел в `hta`
+(7f, §3.4) — `Parse.lean` и `Number.lean`; здесь `htaEq` сравнивает `hta` с
+аргументами по JCS.
 -/
 
 namespace AAT
@@ -51,10 +53,13 @@ def audOk (E : Endpoint) (c : List Link) : Bool :=
   c.all (fun l => l.aud.all (·.contains E.audience)) &&
   (!E.requireChainAud || c.any (·.aud.isSome))
 
-/-- Шаг 7f: `hta` совпадает с аргументами вызова как JCS-объект (одинаковые
-    пары ключ–значение; дубликатов нет — 6b и разбор). -/
+/-- Шаг 7f: `hta` совпадает с аргументами вызова как JCS-объект — одинаковые
+    имена, значения равны после JCS (числа — по их double, §3.4); дубликатов
+    нет — 6b и разбор. Так `9007199254740993` в аргументах и `9007199254740992`
+    в `hta` равны; отказ в таком вызове даёт только шаг 6b. -/
 def htaEq (hta args : Args) : Bool :=
-  hta.length == args.length && hta.all args.contains
+  hta.length == args.length &&
+  hta.all (fun (k, v) => args.any (fun (k', w) => k == k' && v.jcs == w.jcs))
 
 /-- Шаги 7b–7h для листа и вызова. -/
 def popOk (E : Endpoint) (now : Int) (leaf : Link) (call : Call) (pop : PoP) : Bool :=

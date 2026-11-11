@@ -240,9 +240,24 @@ def verify(P, anchors, chain):
     return len(chain) == chain[-1]["delDepth"] + 1
 
 
+def all_admissible(j):
+    """§3.4 on every number the decoder hands over exactly ({"n", "d"}): in
+    constraint maps (3n, 4o), arguments (6b) and hta (7f)."""
+    if isinstance(j, dict):
+        if set(j) == {"n", "d"} and all(isinstance(v, int) for v in j.values()):
+            return decode.admissible(Fraction(j["n"], j["d"]))
+        return all(all_admissible(v) for v in j.values())
+    if isinstance(j, list):
+        return all(all_admissible(v) for v in j)
+    return True
+
+
 def invoke(x):
     P, E, raw, call = x["params"], x["endpoint"], x["chain"], x["call"]
     if not no_dup(call["tree"]): return False  # 6b: repeated names at any depth
+    if not all_admissible([t["maps"] for t in raw]) or not all_admissible(call["args"]) \
+            or not all_admissible(x["pop"].get("hta")):
+        return False  # §3.4: 3n, 4o, 6b, 7f
     sizes = [t["size"] for t in raw]
     if any(n > P["maxTokenSize"] for n in sizes) or sum(sizes) > P["maxChainSize"]: return False
     if not all(header_ok(t["header"], "aat+jwt") for t in raw) or not header_ok(x["pop"]["header"], "aat-pop+jwt"):

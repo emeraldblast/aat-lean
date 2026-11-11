@@ -1,4 +1,5 @@
 import AatLean.Invoke
+import AatLean.Number
 
 /-!
 # Разбор claims токенов и PoP (шаги 3b–3m, 4b–4n, 7b–7c)
@@ -22,7 +23,8 @@ import AatLean.Invoke
 
 Остаётся снаружи (декодер, допущения 1, 5, 6): подпись (`sigBy`), SHA-256
 signing input (`selfHash`), отпечаток `cnf.jwk` (`thumb`), содержимое карт
-ограничений (`maps`, второй этап) и значения аргументов `hta` (JCS).
+ограничений (`maps`, второй этап) и JCS-строки вложенных значений. Числа
+приходят точными значениями; их допустимость (§3.4) — здесь и в `Number.lean`.
 
 **Прочтение 3l/4b2.** Точка проверки разрешает только Ed25519 (как в наборе
 векторов, §3.2: «MUST support Ed25519»): `jwk` «encodes a public key», если
@@ -171,6 +173,7 @@ def parseFields (isRoot : Bool) (t : RawToken) : Option Link := do
   guard (jwkOk jwk)
   let names ← p.field "authorization_details" >>= aatTools           -- 3m, 4b3, 4n
   let tools ← names.mapM (fun n => (t.maps.lookup n).map (n, ·))
+  guard (tools.all (fun (_, m) => m.named.all (fun (_, e) => e.c.admissible)))  -- 3n, 4o (§3.4)
   let dd ← p.field "del_depth" >>= JVal.asNat                        -- 3c, 4b4
   let dmd ← p.field "del_max_depth" >>= JVal.asNat                   -- 3i, 4b4
   if isRoot then guard ((p.field "iss" >>= JVal.asStr).any isUri)   -- 3k
@@ -227,7 +230,8 @@ structure RawPoP where
   header  : JVal
   payload : JVal
   sigBy   : List Key
-  /-- `hta` как аргументы (значения по JCS — снаружи, допущение 6). -/
+  /-- `hta` как аргументы: числа — точные значения (допустимость — 7f здесь),
+      вложенные значения — JCS-строкой от декодера (допущение 6). -/
   hta     : Option Args
 
 /-- Шаги 7b–7c (разбор). Отсутствующие строковые члены — `""`: `popOk`
@@ -241,6 +245,7 @@ def parsePoP (q : RawPoP) : Option PoP := do
   let hta := match p.field "hta" with
     | some (.obj _) => q.hta
     | _ => none
+  guard ((hta.getD []).all (fun (_, v) => v.admissible))           -- 7f (§3.4)
   pure { jti := s "jti", aatId := s "aat_id", aatHash := s "aat_hash", aatTool := s "aat_tool",
          iat, hta, aatAud := opt "aat_aud", nonce := opt "nonce", sigBy := q.sigBy }
 
@@ -287,7 +292,7 @@ def invokeTokens (P : Params) (E : Endpoint) (anchors : List Anchor) (raw : List
   else (.deny, seen)
 
 /-- Вызов как записан: `call` — инструмент и аргументы верхнего уровня
-    (значения по JCS — снаружи, допущение 6); `args` — объект аргументов,
+    (числа — точные значения, вложенные — JCS-строкой, допущение 6); `args` — объект аргументов,
     как он записан в вызове. -/
 structure RawCall where
   call : Call
@@ -298,7 +303,11 @@ structure RawCall where
     `invokeTokens`. -/
 def invokeCall (P : Params) (E : Endpoint) (anchors : List Anchor) (raw : List RawToken)
     (rc : RawCall) (rp : RawPoP) (seen : List String) : Decision × List String :=
-  if rc.args.noDup then invokeTokens P E anchors raw rc.call rp seen else (.deny, seen)
+  if rc.args.noDup then
+    if rc.call.args.all (fun (_, v) => v.admissible) then             -- 6b (§3.4)
+      invokeTokens P E anchors raw rc.call rp seen
+    else (.deny, seen)
+  else (.deny, seen)
 
 /-! ## Перенос теорем -/
 
@@ -329,7 +338,10 @@ theorem invokeCall_allow {P : Params} {E : Endpoint} {anchors : List Anchor}
   unfold invokeCall at h
   by_cases hd : rc.args.noDup = true
   · simp only [hd, ite_true] at h
-    exact ⟨hd, h⟩
+    by_cases ha : rc.call.args.all (fun (_, v) => v.admissible) = true
+    · simp only [ha, ite_true] at h
+      exact ⟨hd, h⟩
+    · simp [ha] at h
   · simp [hd] at h
 
 /-- `invokeTokens` без шага 4b5. -/
@@ -650,6 +662,20 @@ example : runCall (.obj [("amount", .num "50"), ("meta", .obj [("a", .null), ("a
   decide +kernel
 example : runCall (.obj [("amount", .num "50"), ("tags", .arr [.obj [("b", .null), ("b", .null)]])]) = .deny := by
   decide +kernel
+-- §3.4: недопустимые числа — в ограничении (3n), в hta (7f), в аргументах (6b)
+example : runT { rootRawT with maps := [payCap 9007199254740993] } childRawT = .deny := by decide +kernel
+example : runT { rootRawT with maps := [payCap 9007199254740992] } childRawT = .allow := by decide +kernel
+example : runT rootRawT childRawT { popRawT with hta := some [("amount", .num 9007199254740993)] } = .deny := by
+  decide +kernel
+-- §3.4 + 7f по JCS: 1.00000000000000001 и 1 сериализуются одинаково, поэтому
+-- hta и аргументы равны, и недопустимое число отвергает только своя проверка
+def runNums (args hta : Args) : Decision :=
+  (invokeCall PT ET anchorsUT [rootRawT, childRawT] ⟨⟨"pay", args⟩, .obj []⟩
+    { popRawT with hta := some hta } []).1
+def oneish : Rat := 100000000000000001 / 100000000000000000
+example : runNums [("amount", .num 1)] [("amount", .num 1)] = .allow := by decide +kernel
+example : runNums [("amount", .num oneish)] [("amount", .num 1)] = .deny := by decide +kernel    -- 6b
+example : runNums [("amount", .num 1)] [("amount", .num oneish)] = .deny := by decide +kernel    -- 7f
 -- 3d: par_hash у корня, даже не строка
 example : runT (withRoot (·.set "par_hash" (.null))) childRawT = .deny := by decide +kernel
 
