@@ -1,0 +1,672 @@
+
+
+
+
+Web Authorization Protocol                                      Y. Mussa
+Internet-Draft                                          12 November 2026
+Intended status: Informational                                          
+Expires: 16 May 2027
+
+
+   A Mechanized Model of the Attenuating Agent Token Chain Verifier:
+                   Implementation Report and Findings
+               draft-mussa-oauth-aat-mechanized-model-00
+
+Abstract
+
+   This document reports on an executable model of the chain
+   verification algorithm of Attenuating Agent Tokens, version -02 (AAT-
+   02), written in the Lean 4 proof assistant.  Security properties of
+   the algorithm are stated as theorems about the same function that is
+   run against the published test vectors, and are checked by the Lean
+   kernel for delegation chains of any length.  The report confirms
+   mechanically that the structural attenuation rules of AAT-02 are
+   sound with respect to the meaning of constraints, that they are
+   incomplete as the specification intends, and that several checks of
+   the verification algorithm are implied by the others.  It describes
+   the model's agreement with the published test vectors and a
+   differential testing method that uses the model as an oracle for
+   other implementations.  Findings relevant to the next revision of AAT
+   are collected in one section.
+
+Status of This Memo
+
+   This Internet-Draft is submitted in full conformance with the
+   provisions of BCP 78 and BCP 79.
+
+   Internet-Drafts are working documents of the Internet Engineering
+   Task Force (IETF).  Note that other groups may also distribute
+   working documents as Internet-Drafts.  The list of current Internet-
+   Drafts is at https://datatracker.ietf.org/drafts/current/.
+
+   Internet-Drafts are draft documents valid for a maximum of six months
+   and may be updated, replaced, or obsoleted by other documents at any
+   time.  It is inappropriate to use Internet-Drafts as reference
+   material or to cite them other than as "work in progress."
+
+   This Internet-Draft will expire on 16 May 2027.
+
+Copyright Notice
+
+   Copyright (c) 2026 IETF Trust and the persons identified as the
+   document authors.  All rights reserved.
+
+
+
+Mussa                      Expires 16 May 2027                  [Page 1]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
+   This document is subject to BCP 78 and the IETF Trust's Legal
+   Provisions Relating to IETF Documents (https://trustee.ietf.org/
+   license-info) in effect on the date of publication of this document.
+   Please review these documents carefully, as they describe your rights
+   and restrictions with respect to this document.  Code Components
+   extracted from this document must include Revised BSD License text as
+   described in Section 4.e of the Trust Legal Provisions and are
+   provided without warranty as described in the Revised BSD License.
+
+Table of Contents
+
+   1.  Introduction  . . . . . . . . . . . . . . . . . . . . . . . .   2
+   2.  The Model . . . . . . . . . . . . . . . . . . . . . . . . . .   3
+     2.1.  Scope . . . . . . . . . . . . . . . . . . . . . . . . . .   3
+     2.2.  Assumptions . . . . . . . . . . . . . . . . . . . . . . .   3
+   3.  Mechanized Properties . . . . . . . . . . . . . . . . . . . .   4
+   4.  Findings for the Specification  . . . . . . . . . . . . . . .   7
+     4.1.  The attenuation rules are sound . . . . . . . . . . . . .   7
+     4.2.  The attenuation rules are incomplete, as intended . . . .   7
+     4.3.  Redundant steps . . . . . . . . . . . . . . . . . . . . .   7
+     4.4.  Revocation  . . . . . . . . . . . . . . . . . . . . . . .   8
+   5.  Agreement with the Test Vectors . . . . . . . . . . . . . . .   9
+   6.  Differential Conformance Testing  . . . . . . . . . . . . . .   9
+   7.  Considerations for Test Harnesses . . . . . . . . . . . . . .   9
+   8.  Security Considerations . . . . . . . . . . . . . . . . . . .  10
+   9.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .  11
+   10. Informative References  . . . . . . . . . . . . . . . . . . .  11
+   Acknowledgments . . . . . . . . . . . . . . . . . . . . . . . . .  12
+   Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .  12
+
+1.  Introduction
+
+   Attenuating Agent Tokens [AAT] carry tool-level and argument-level
+   authority for AI agents through a chain of delegations, each of which
+   may only narrow the authority of its parent.  A recipient verifies
+   the chain offline with the algorithm of Section 8 of [AAT].
+
+   An independent implementation report [DAVLIATSHIN] describes a
+   TypeScript verifier that agrees with the author's 229 test vectors
+   [VECTORS], a symbolic model in ProVerif of AAT-01 for chains of up to
+   four tokens, and a list of ambiguities in the specification.  This
+   document complements that report.  It addresses a level the symbolic
+   model does not cover: the meaning of argument constraints and the
+   attenuation rules over them, for chains of any length, against the
+   text of -02.
+
+   The contribution is an executable model [MODEL] in Lean 4 [LEAN]:
+
+
+
+
+Mussa                      Expires 16 May 2027                  [Page 2]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
+   *  a verification function that follows the steps of Section 8 of
+      [AAT] and takes its inputs (parameters, trust anchors, chain,
+      tool, arguments, PoP);
+
+   *  a denotation of each constraint type (what values it permits),
+      defined independently of the structural attenuation relation, so
+      that soundness of the relation is a theorem rather than a
+      definition;
+
+   *  theorems about that function, checked by the Lean kernel;
+
+   *  a run of that same function on the published test vectors.
+
+   The link between the model and any production verifier is by testing,
+   not by proof.  The model treats cryptography as ideal and leaves
+   byte-level parsing to stated assumptions (Section 2.2).
+
+   The proofs were written with the assistance of an AI system and are
+   checked by the Lean kernel; no theorem depends on axioms other than
+   the three standard axioms of Lean (propositional extensionality,
+   choice, quotient soundness), and none uses sorry or native code
+   evaluation.
+
+2.  The Model
+
+2.1.  Scope
+
+   The model implements Section 8 of [AAT]: - steps 1 and 2a-2c; - the
+   root checks 3a-3n and the per-link checks 4a-4q, including the
+   attenuation rules of Section 4.5 for all nine core constraint types
+   (wildcard, exact, one_of, not_one_of, range, contains, subset, all,
+   any) and the key rules 4p1-4p4; - step 5; - the leaf and invocation
+   checks 6a-6c; - proof of possession, steps 7a-7i.
+
+   Number admissibility (Section 3.4, used in 3n, 4o, 6b and 7f) is
+   computed in the model: correctly rounded IEEE 754 binary64, then the
+   shortest form that ECMAScript Number::toString, and therefore JCS,
+   writes.  This computation agrees with Python's correctly rounded
+   float and shortest repr on 194 860 numbers, random and targeted at
+   powers of 2 and 10.  Replay state for PoP jti (step 7i) is held
+   outside the verification function, as Section 8 places it outside the
+   algorithm's inputs.  The current time is an explicit parameter.
+
+2.2.  Assumptions
+
+   1.  Signatures cannot be forged; SHA-256 is collision-resistant, and
+       the JWK thumbprint URI [RFC7638] [RFC9278] is an injective
+       function of the key.
+
+
+
+Mussa                      Expires 16 May 2027                  [Page 3]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
+   2.  The key of a trust anchor belongs to its stated issuer.
+
+   3.  The recipient executes exactly the bytes that were verified.
+
+   4.  Values are compared by their JCS serialization [RFC8785].
+       Numbers nested inside array or object values reach the model as a
+       JCS string computed outside it, and are assumed admissible
+       (Section 3.4 of [AAT]).
+
+   5.  The enforcement point's algorithm allowlist is Ed25519 alone, a
+       signature is attributed only to keys with crv Ed25519, the root
+       iss is a URI when it has an RFC 3986 scheme followed by : and
+       contains only URI characters (step 3k), it understands no crit
+       parameter, and it rejects a JWS header with a repeated member
+       name, which [RFC7515] Section 4 permits.
+
+   6.  The enforcement point accepts only Ed25519 keys, as the published
+       test vectors assume: cnf.jwk encodes a public key when kty is
+       OKP, crv is Ed25519, x is 43 base64url characters, and d is
+       absent.
+
+   7.  For the revocation extension only (Section 4.4): the revocation
+       snapshot is fresh.
+
+   The model checks token and chain sizes and every JWS Protected Header
+   (steps 2a, 2b, 3a, 4a, 7a) and reads each signed payload as written:
+   a JSON tree that keeps repeated member names and number literals.  It
+   performs the claim parsing of Section 8 itself (duplicate member
+   names, NumericDate and integer claims, jti, cnf.jwk,
+   authorization_details; steps 3b-3m, 4b-4n, 7b-7c) and then runs the
+   verifier on the parsed chain.  A token's signature is represented by
+   the set of keys under which it verifies, its signing input by its
+   SHA-256 value, and its key by its JWK thumbprint URI; the test
+   harness computes these from the token bytes with a real Ed25519
+   implementation.
+
+3.  Mechanized Properties
+
+   All properties hold for chains of any length.  Names refer to
+   theorems in [MODEL].
+
+   +==============+====================+==============================+
+   |Property      |Statement           |Theorem                       |
+   +==============+====================+==============================+
+   |T1            |If the verifier     |t1_monotone, t1_core          |
+   |              |accepts a chain,    |                              |
+   |              |every call permitted|                              |
+   |              |by a link is        |                              |
+
+
+
+Mussa                      Expires 16 May 2027                  [Page 4]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
+   |              |permitted by its    |                              |
+   |              |parent (C(child) is |                              |
+   |              |a subset of         |                              |
+   |              |C(parent),          |                              |
+   |              |Section 4.1)        |                              |
+   +--------------+--------------------+------------------------------+
+   |Soundness     |The structural rules|subsumes_sound,               |
+   |              |of Section 4.5      |narrowsMapB_sound,            |
+   |              |(Table 4 and key    |narrowsB_sound                |
+   |              |rules 4p2-4p4) imply|                              |
+   |              |semantic narrowing, |                              |
+   |              |for all nine core   |                              |
+   |              |constraint types    |                              |
+   +--------------+--------------------+------------------------------+
+   |Incompleteness|Some semantically   |incompleteness_witness,       |
+   |              |narrower links are  |exactPdf_structurally_rejected|
+   |              |rejected, as        |                              |
+   |              |Section 4.1 intends |                              |
+   +--------------+--------------------+------------------------------+
+   |T2            |An authorized call  |t2_coverage                   |
+   |              |is permitted by     |                              |
+   |              |every link of the   |                              |
+   |              |chain, not only by  |                              |
+   |              |the leaf            |                              |
+   +--------------+--------------------+------------------------------+
+   |T3            |The root is signed  |t3_root                       |
+   |              |by a trust anchor's |                              |
+   |              |key and names that  |                              |
+   |              |anchor's issuer (3b,|                              |
+   |              |3k)                 |                              |
+   +--------------+--------------------+------------------------------+
+   |I1, I5        |Each link is signed |i1_signed, i5_bound           |
+   |              |by its parent's     |                              |
+   |              |holder and bound to |                              |
+   |              |that parent by      |                              |
+   |              |par_hash            |                              |
+   +--------------+--------------------+------------------------------+
+   |T4            |Every link is valid |t4_ttl                        |
+   |              |at the current time,|                              |
+   |              |outlives no parent, |                              |
+   |              |and is issued no    |                              |
+   |              |earlier than the    |                              |
+   |              |root (I3)           |                              |
+   +--------------+--------------------+------------------------------+
+   |T6            |A link's depth      |t6_depth, t6_length           |
+   |              |equals its position;|                              |
+   |              |chain length is at  |                              |
+   |              |most                |                              |
+
+
+
+Mussa                      Expires 16 May 2027                  [Page 5]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
+   |              |MAX_DELEGATION_DEPTH|                              |
+   |              |+ 1 (I2)            |                              |
+   +--------------+--------------------+------------------------------+
+   |T7            |Steps 4e, 4f and 5  |t7_redundant                  |
+   |              |never change a      |                              |
+   |              |verdict             |                              |
+   +--------------+--------------------+------------------------------+
+   |T7'           |The value check of  |t7_3c_redundant               |
+   |              |step 3c (root       |                              |
+   |              |del_depth is 0)     |                              |
+   |              |never changes a     |                              |
+   |              |verdict             |                              |
+   +--------------+--------------------+------------------------------+
+   |T7''          |The iss/par_hash    |t7_4b5_redundant              |
+   |              |check of step 4b5   |                              |
+   |              |never changes a     |                              |
+   |              |verdict, given non- |                              |
+   |              |empty key           |                              |
+   |              |thumbprints         |                              |
+   +--------------+--------------------+------------------------------+
+   |T8            |Every aud in the    |t8_aud                        |
+   |              |chain names this    |                              |
+   |              |enforcement point   |                              |
+   |              |(6c)                |                              |
+   +--------------+--------------------+------------------------------+
+   |T9            |The PoP is signed by|t9_pop, t9_replay             |
+   |              |the leaf holder's   |                              |
+   |              |key and binds the   |                              |
+   |              |leaf, tool,         |                              |
+   |              |arguments and time  |                              |
+   |              |window; a replayed  |                              |
+   |              |PoP is rejected at  |                              |
+   |              |an endpoint that    |                              |
+   |              |tracks PoP jti      |                              |
+   |              |values (step 7, I6) |                              |
+   +--------------+--------------------+------------------------------+
+   |T5            |Extension: revoking |t5_revocation,                |
+   |              |a root rejects every|t5_revokes_descendants        |
+   |              |chain that starts at|                              |
+   |              |it                  |                              |
+   +--------------+--------------------+------------------------------+
+
+                      Table 1: Mechanized properties
+
+
+
+
+
+
+
+
+Mussa                      Expires 16 May 2027                  [Page 6]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
+   T1 is stated about the accepting verifier and holds for any values of
+   its other inputs.  T2 follows from T1 only because the model's notion
+   of a permitted call is the whole of step 6b (closed world, the "*"
+   entry, required arguments, admissible numbers), not only the per-
+   argument relation.
+
+   The theorems are tested against vacuity: mutating any one check of
+   the verifier makes some kernel-checked example fail.  Of 151
+   mutations, 146 are caught; the five that survive (steps 3c, 4e, 4f, 5
+   and 4b5) are exactly those that T7, T7' and T7'' prove cannot change
+   a verdict.
+
+4.  Findings for the Specification
+
+4.1.  The attenuation rules are sound
+
+   Section 4.1 of [AAT] states, without proof and in a non-normative
+   section, that the structural rules are sound with respect to the set
+   of calls a token permits.  The model confirms this for Table 4, for
+   the key rules 4p2-4p4, and for whole chains (T1).  Because
+   Section 4.1 is non-normative, the result is soundness with respect to
+   that model of C(T), not a proof of the normative invariant I4.
+
+4.2.  The attenuation rules are incomplete, as intended
+
+   Two kernel-checked witnesses show semantically narrower links that
+   the structural rules reject: a one_of under a range whose values all
+   lie in the range, and the exact under any example of Section 4.1.
+   These match findings B1 and B2 of [DAVLIATSHIN] and test vectors
+   J.19.7 and J.19.1 [VECTORS].  The published suite rejects further
+   semantically narrower links of the same kind (J.19.4-J.19.6, J.8.4),
+   and the author has stated that this conservatism is intended.
+
+4.3.  Redundant steps
+
+   T7 proves that steps 4e, 4f and 5 do not change any verdict: the
+   verifier with and without them is the same function on all inputs.
+   This is a mechanized confirmation of finding B9 of [DAVLIATSHIN] and
+   of the notes to Section 8 of [AAT], which say that two requirements
+   hold by induction and call step 5 defense in depth.
+
+   T7' is the converse direction for the root depth: given step 5 and
+   step 4d, the value check of step 3c (del_depth of the root is 0) does
+   not change any verdict either.  That check and step 5 are therefore
+   mutually redundant: either one, together with 4d, suffices.
+
+
+
+
+
+
+Mussa                      Expires 16 May 2027                  [Page 7]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
+   Step 3c also checks that the root's del_depth is an integer, and that
+   check is not redundant.  In the model it belongs to claim parsing
+   (Section 2): test vector J.21.9, whose root del_depth is false, is
+   denied there; a verifier that coerces false to 0, as false + 1
+   evaluates to 1 in JavaScript and Python, passes step 5 on it, so only
+   the integer check rejects it.  Whether 3c can be the only fault an
+   implementation commits therefore depends on how the implementation
+   splits type checks from value checks: an independent verifier that
+   types the root depth inside 3c changes two verdicts (J.21.2, J.21.9)
+   when 3c is dropped, and none once the type check is separated
+   [DAVLIATSHIN].  This observation is due to Azat Davliatshin and Niki
+   Niyikiza.
+
+   T7'' concerns parsing.  Step 4b5 requires a derived token's iss and
+   par_hash to be present and to be strings, and its iat and exp to be
+   NumericDate values.  T7'' covers the first part only, which does not
+   change any verdict: a token without a string par_hash fails step 4q,
+   which compares it with the parent's signing-input hash, and a token
+   without a string iss fails step 4c, which compares it with the JWK
+   thumbprint URI of the parent's key.  The theorem assumes that
+   thumbprint URIs are non-empty, which every URI of [RFC9278] is.  The
+   generator of the published test vectors already records this
+   redundancy [VECTORS]; T7'' proves it, and an independent verifier
+   confirms it: dropping 4b5 moves J.24.7 to 4c and J.24.8 to 4q, with
+   the same verdicts.
+
+   A consequence for conformance testing is that no test vector can
+   detect an implementation that omits exactly one of these checks (for
+   3c, its value check; for 4b5, its iss/par_hash check): such an
+   implementation returns the same verdict as a correct one on every
+   input.
+
+   Suggestion for the next revision: state in Section 8 which steps are
+   implied by others, so that implementers do not read the vector suite
+   as covering them, and so that an implementation that keeps them as
+   defense in depth knows they cannot be tested in isolation.
+
+4.4.  Revocation
+
+   Section 9.8 of [AAT] defines no revocation mechanism.  The model
+   includes, as a separate extension outside the verification function,
+   a check that the root is not in a revocation snapshot, and proves
+   that revoking a root rejects every chain that starts at it (T5).
+   AAT-02 offers no way to revoke an intermediate link alone; revocation
+   is per chain, through its root.
+
+
+
+
+
+
+Mussa                      Expires 16 May 2027                  [Page 8]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
+5.  Agreement with the Test Vectors
+
+   The published suite [VECTORS] (229 vectors: 54 permit, 175 deny) is
+   decoded into the model's input, with signatures checked by OpenSSL
+   Ed25519, and evaluated by the same function the theorems are about.
+   A vector is in scope when its expected verdict is decided by modeled
+   steps.
+
+   *  All 229 vectors are in scope, and the model agrees on all 229,
+      including all 54 permit vectors.  PoP replay state after the call
+      matches on 3 of 3.  Each of the 15 vectors that test headers and
+      sizes is denied by those checks, each of the 32 that test claim
+      parsing by the model's parser, and each of the 5 that test
+      inadmissible numbers by the admissibility check.
+
+   Step 7f compares hta with the arguments by their JCS serializations,
+   so an inadmissible argument and the admissible number that JCS writes
+   for it compare equal.  Test vector J.8.7 has 9007199254740993 in the
+   arguments and 9007199254740992 in hta; only step 6b denies it.  A
+   verifier that compares by JCS as specified but omits the
+   admissibility check of 6b accepts it.  The model makes the same
+   comparison, so its checks of 6b and 7f are each necessary, and the
+   mutation test confirms that each is caught on its own.
+
+6.  Differential Conformance Testing
+
+   Because the model is executable, it can serve as a test oracle for
+   other verifiers.  The harness in [MODEL] sends each vector to an
+   implementation over a JSON-lines protocol and compares its verdict
+   with the model's.  Inputs are the published vectors and generated
+   signed chains of one to MAX_DELEGATION_DEPTH + 1 tokens, and chains
+   one token deeper, over all nine constraint types, each with one
+   mutation targeting a specific step of Section 8.  The generator does
+   not decide the expected verdict; the model does.
+
+   Disagreements are grouped by step and split into dangerous ones (the
+   model denies, the implementation permits) and spurious denials.  Two
+   calibration runs check the harness itself: an adapter that answers
+   with the model agrees on 529 of 529 inputs, and a verifier with three
+   deliberately introduced faults (range bound inclusivity, a missing
+   par_hash check, a missing chain aud check) is reported for all three
+   faults with no false alarms.
+
+7.  Considerations for Test Harnesses
+
+   External reviews of the harness in [MODEL] found the defects below,
+   all corrected.  They are recorded here because they apply to any
+   harness that consumes the published vector format.
+
+
+
+Mussa                      Expires 16 May 2027                  [Page 9]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
+   1.  Each vector carries a token in several representations (decoded
+       payload, signing input, signature, compact serialization).  A
+       harness that reads claims from one representation and checks the
+       signature over another can be fed claims the signature does not
+       cover.  Claims, signing input and signature should be taken from
+       the compact serialization alone.
+
+   2.  Arguments must be decoded with JSON objects and arrays kept
+       distinct at every depth; an empty object is not an empty array.
+
+   3.  Duplicate member names must be detected at every depth before
+       objects are built, or a later value silently replaces an earlier
+       one.
+
+   4.  A conformance run should fail when the implementation under test
+       exits with an error, even if every verdict it printed matched.
+
+   5.  Each answer should be accepted only for a vector asked in that
+       run, and only once; otherwise a later answer can overwrite an
+       earlier, wrong one.
+
+   6.  The implementation should not receive the expected verdict or the
+       vector's description, which name the failing step.
+
+   7.  A signature should be attributed only to keys whose type and
+       curve match the algorithm: an Ed25519 signature checked against
+       the x of an X25519 JWK must not count as verification under that
+       key.
+
+   8.  A header or payload that is not a JSON object is a denial, not a
+       case to skip, and JSON nested as deeply as the size limits allow
+       must not crash the harness.
+
+   9.  A deliberately faulty reference implementation, run on every
+       change, catches a harness or fixture that silently denies
+       everything.
+
+8.  Security Considerations
+
+   This document reports on a model; it defines no protocol.  The
+   properties of Section 3 hold for the model under the assumptions of
+   Section 2.2.  They say nothing about an implementation that has not
+   been tested against the model, and testing establishes agreement only
+   on the inputs tried.  In particular, base64url decoding and the JSON
+   parser itself, cryptographic primitives, and the correspondence
+   between verified bytes and executed actions are outside the model and
+   remain the implementer's responsibility.
+
+
+
+
+Mussa                      Expires 16 May 2027                 [Page 10]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
+9.  IANA Considerations
+
+   This document has no IANA actions.
+
+10.  Informative References
+
+   [AAT]      Niyikiza, N., "Attenuating Agent Tokens", Work in
+              Progress, Internet-Draft, draft-niyikiza-oauth-
+              attenuating-agent-tokens-02, October 2026,
+              <https://www.ietf.org/archive/id/draft-niyikiza-oauth-
+              attenuating-agent-tokens-02.txt>.
+
+   [DAVLIATSHIN]
+              Davliatshin, A., "Implementation Report on Attenuating
+              Agent Token Chains", Work in Progress, Internet-Draft,
+              draft-davliatshin-oauth-attenuation-chains-report-00,
+              November 2026, <https://datatracker.ietf.org/doc/draft-
+              davliatshin-oauth-attenuation-chains-report/>.
+
+   [LEAN]     Moura, L. D. and S. Ullrich, "The Lean 4 Theorem Prover
+              and Programming Language",
+              DOI 10.1007/978-3-030-79876-5_37, 2021,
+              <https://doi.org/10.1007/978-3-030-79876-5_37>.
+
+   [MODEL]    Mussa, Y., "aat-lean: an executable Lean 4 model of the
+              AAT-02 chain verifier", n.d.,
+              <https://github.com/emeraldblast/aat-lean>.
+
+   [RFC7515]  Jones, M., Bradley, J., and N. Sakimura, "JSON Web
+              Signature (JWS)", RFC 7515, DOI 10.17487/RFC7515, May
+              2015, <https://www.rfc-editor.org/rfc/rfc7515>.
+
+   [RFC7638]  Jones, M. and N. Sakimura, "JSON Web Key (JWK)
+              Thumbprint", RFC 7638, DOI 10.17487/RFC7638, September
+              2015, <https://www.rfc-editor.org/rfc/rfc7638>.
+
+   [RFC8785]  Rundgren, A., Jordan, B., and S. Erdtman, "JSON
+              Canonicalization Scheme (JCS)", RFC 8785,
+              DOI 10.17487/RFC8785, June 2020,
+              <https://www.rfc-editor.org/rfc/rfc8785>.
+
+   [RFC9278]  Jones, M. and K. Yasuda, "JWK Thumbprint URI", RFC 9278,
+              DOI 10.17487/RFC9278, August 2022,
+              <https://www.rfc-editor.org/rfc/rfc9278>.
+
+   [VECTORS]  tenuo-ai, "AAT-02 JWS test vectors (tests/vectors/aat-jws-
+              vectors.json)", n.d., <https://github.com/tenuo-ai/tenuo/
+              tree/99fb00994d8d66b213cd12967d6e8eef45025672>.
+
+
+
+Mussa                      Expires 16 May 2027                 [Page 11]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
+Acknowledgments
+
+   Thanks to Niki Niyikiza for the specification and the test vectors,
+   and for reviewing the readings of Section 8; and to Azat Davliatshin
+   for checking the results against his independent verifier, and for
+   the observation, with Niki, that step 3c combines a redundant value
+   check with a necessary integer check.
+
+Author's Address
+
+   Yerassyl Mussa
+   Email: emeraldblast0@gmail.com
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Mussa                      Expires 16 May 2027                 [Page 12]

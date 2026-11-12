@@ -146,6 +146,7 @@ no input can distinguish them.
 | `AatLean/Extension/Revocation.lean` | T5 |
 | `Runner.lean`, `vectors/` | Vector decoder, runner, report |
 | `conformance/` | Differential conformance testing of other verifiers |
+| `draft/` | Implementation report (Internet-Draft): kramdown-rfc source, rendered text, `build.sh` |
 | `spec/` | Mapping of AAT-02 to the model; position relative to Davliatshin's report |
 
 ## Build
