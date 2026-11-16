@@ -18,7 +18,7 @@ chains).
 | Generated chains | `conformance/generate.py`, seeds 11, 12, 13, 1 000 chains each, 1 to 10 tokens (`MAX_DELEGATION_DEPTH` + 2), one mutation per chain against a §8 step |
 | Comparison | verdict only (PERMIT / DENY); the implementation receives vectors without `expected`, `title`, `description`, `notes`, `mutation` |
 
-Generated suites (byte-reproducible from the seed at this commit):
+Generated suites (byte-reproducible from the seed with the generator at `9d940b9`; later generators add mutations and produce other chains):
 
 | Seed | SHA-256 of `gen-<seed>.json` | Model PERMIT / DENY | No mutation | One token too deep |
 |---|---|---|---|---|

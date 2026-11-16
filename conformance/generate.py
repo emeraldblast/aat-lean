@@ -49,7 +49,23 @@ MUTATIONS = [
     "aud-other", "pop-tool", "pop-hta", "pop-sig-attacker", "pop-iat-old", "pop-aat-id",
     "call-violates", "call-unknown-tool", "call-extra-arg", "call-missing-arg", "call-dup-arg",
     "range-edge-child", "call-at-exclusive-bound", "chain-too-deep",
+    # §3.4 numbers, 6b nested duplicates, 3k / 3a anchors, deep JSON
+    "arg-inadmissible", "hta-inadmissible", "arg-admissible-big", "constraint-inadmissible",
+    "nested-dup-arg", "root-iss-not-uri", "anchor-x25519", "deep-ignored-claim",
 ]
+
+# 2^53 + 1 is not admissible (§3.4): JCS writes it as 2^53. 2^53 + 2 is.
+BIG_BAD, BIG_JCS, BIG_OK = 9007199254740993, 9007199254740992, 9007199254740994
+OPEN_PAY = {"pay": {"amount": {"constraint_type": "wildcard"}, "*": {"constraint_type": "wildcard"}}}
+FIXED_MAPS = {
+    "arg-inadmissible": OPEN_PAY, "hta-inadmissible": OPEN_PAY, "arg-admissible-big": OPEN_PAY,
+    "nested-dup-arg": OPEN_PAY,
+    "constraint-inadmissible": {"pay": {"amount": {"constraint_type": "exact", "value": BIG_BAD}}},
+}
+# Extra trust anchors in every generated suite (the vector schema has no per-vector anchors):
+# a non-URI issuer (3k) and an X25519 JWK carrying the x of control_plane's Ed25519 key (3a).
+NOT_URI_ISS = "not a URI"
+X25519_ISS = "https://x25519.example.com"
 
 # exclusive-bound edge cases: what a verifier that ignores min_inclusive/max_inclusive gets wrong
 EDGE_PARENT = {"pay": {"amount": {"constraint_type": "range", "min": 10, "max": 100,
@@ -214,8 +230,12 @@ def build(r, seed, n_links, mutation):
         dmds.append(r.randint(floor, dmds[-1]))
     root_tools = ({t: rnd_map(r) for t in r.sample(TOOLS, r.randint(1, 3))}
                   if mutation not in ("range-edge-child", "call-at-exclusive-bound") else copy.deepcopy(EDGE_PARENT))
+    if mutation in FIXED_MAPS:
+        root_tools = copy.deepcopy(FIXED_MAPS[mutation])
     toolsets = [root_tools]
     for _ in range(1, n_links):
+        if mutation in FIXED_MAPS:  # every link keeps the same map: only the fault differs
+            toolsets.append(copy.deepcopy(root_tools)); continue
         parent = toolsets[-1]
         child = {}
         for t, pm in parent.items():
@@ -281,9 +301,15 @@ def build(r, seed, n_links, mutation):
             if mutation == "root-depth-1": p["del_depth"] = 1
             if mutation == "expired": p["exp"] = NOW - 1
             if mutation == "iat-future": p["iat"] = NOW + P["max_iat_skew"] + 60
+            if mutation == "root-iss-not-uri": p["iss"] = NOT_URI_ISS; signer = "control_plane2"
+            if mutation == "anchor-x25519": p["iss"] = X25519_ISS
         if mutation == "aud-other" and r.random() < 0.3:
             p["aud"] = [SUITE["params"]["audience"], "https://other.example.com"]  # still names us: allowed
-        t = mint.jws(HDR, p, KEYS[signer]["seed_hex"], signer)
+        raw = None
+        if mutation == "deep-ignored-claim" and i == 0:
+            # an unrecognised claim nested 5000 deep: ignored by §3.2, within MAX_TOKEN_SIZE
+            raw = mint.compact_json(p)[:-1] + ',"x_ignored":' + "[" * 5000 + "0" + "]" * 5000 + "}"
+        t = mint.jws(HDR, p, KEYS[signer]["seed_hex"], signer, payload_json=raw)
         chain.append(t); payloads.append(p)
     if mutation == "par-hash-other-parent" and n_links >= 2:
         # a sibling parent with the same holder: the child's par_hash names the sibling
@@ -329,11 +355,23 @@ def make_vector(r, seed, idx):
         k0 = next(iter(args))
         body = mint.compact_json(args)[1:-1]
         args_json = "{" + body + "," + json.dumps(k0) + ":" + json.dumps(args[k0]) + "}"
+    hta = args
+    if mutation == "arg-inadmissible":
+        args, hta = {"amount": BIG_BAD}, {"amount": BIG_JCS}     # equal by JCS; only 6b denies
+    elif mutation == "hta-inadmissible":
+        args, hta = {"amount": BIG_JCS}, {"amount": BIG_BAD}     # equal by JCS; only 7f denies
+    elif mutation == "arg-admissible-big":
+        args = hta = {"amount": BIG_OK}                          # admissible: permitted
+    elif mutation == "constraint-inadmissible":
+        args = hta = {"amount": BIG_JCS}                         # JCS-equal to the literal; only 3n denies
+    elif mutation == "nested-dup-arg":
+        args, hta = {"amount": 5, "meta": {"a": 2}}, {"amount": 5, "meta": {"a": 2}}
+        args_json = '{"amount":5,"meta":{"a":1,"a":2}}'           # 6b: a repeated name below the top level
     if args_json is None:
         args_json = mint.compact_json(args)
     leaf = chain[-1]
     pop = {"jti": jti(seed, 1000), "iat": NOW, "aat_id": payloads[-1]["jti"],
-           "aat_hash": leaf["signing_input_sha256_b64u"], "aat_tool": tool, "hta": args,
+           "aat_hash": leaf["signing_input_sha256_b64u"], "aat_tool": tool, "hta": hta,
            "aat_aud": SUITE["params"]["audience"]}
     pop_signer = holders_for(n_links)[-1]
     if mutation == "pop-tool": pop["aat_tool"] = tool + "_other"
@@ -357,6 +395,10 @@ def main():
     seed, count, out = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
     r = random.Random(seed)
     suite = {k: SUITE[k] for k in ("spec", "conventions", "params", "keys", "trust_anchors")}
+    x25519 = dict(KEYS["control_plane"]["jwk"], crv="X25519")
+    suite["trust_anchors"] = SUITE["trust_anchors"] + [
+        {"iss": NOT_URI_ISS, "jwk": KEYS["control_plane2"]["jwk"]},
+        {"iss": X25519_ISS, "jwk": x25519}]
     suite["vectors"] = [make_vector(r, seed, i) for i in range(count)]
     json.dump(suite, open(out, "w"), indent=1, ensure_ascii=False)
     print(f"{count} vectors -> {out}")
