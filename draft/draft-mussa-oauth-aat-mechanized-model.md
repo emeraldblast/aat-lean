@@ -52,6 +52,16 @@ informative:
     target: https://github.com/emeraldblast/aat-lean
     author:
       - fullname: Yerassyl Mussa
+  RA:
+    title: "Mission-Bound Authorization: AAT-02 verifier (verifyAatPresentation)"
+    target: https://github.com/mcguinness/mission-bound-authorization/tree/e456a5fbb3c391a2f9b5577cde9faab9d63bcd5a
+    author:
+      - org: mcguinness
+  RUNS:
+    title: "aat-lean: records of differential runs (conformance/runs/)"
+    target: https://github.com/emeraldblast/aat-lean/tree/main/conformance/runs
+    author:
+      - fullname: Yerassyl Mussa
   LEAN:
     title: "The Lean 4 Theorem Prover and Programming Language"
     seriesinfo:
@@ -77,7 +87,8 @@ rules of AAT-02 are sound with respect to the meaning of constraints, that
 they are incomplete as the specification intends, and that several checks of
 the verification algorithm are implied by the others. It describes the model's
 agreement with the published test vectors and a differential testing method
-that uses the model as an oracle for other implementations. Findings relevant
+that uses the model as an oracle for other implementations,
+with its results against an independent verifier. Findings relevant
 to the next revision of AAT are collected in one section.
 
 --- middle
@@ -272,6 +283,25 @@ implied by others, so that implementers do not read the vector suite as
 covering them, and so that an implementation that keeps them as defense in
 depth knows they cannot be tested in isolation.
 
+## No bound on JSON nesting depth {#nesting}
+
+AAT-02 bounds the size of a token (`MAX_TOKEN_SIZE`) and of a chain, and
+requires unrecognised claims to be ignored, but sets no bound on JSON nesting
+depth. A token whose payload carries an unrecognised claim nested 5 000 deep
+fits well within 65 536 bytes. Read literally, Section 8 permits a chain
+with such a root, and the model permits it. The independent verifier of
+{{differential}} denies it, because its JSON reader refuses nesting deeper
+than 512 levels as a guard against stack exhaustion. The denial is
+fail-closed and a reasonable resource limit, but it is not in the
+specification, so two verifiers that each follow Section 8 return
+different verdicts on the same input, and no published vector tests the
+case.
+
+Suggestion for the next revision: either define a maximum nesting depth for
+token headers, payloads and call arguments, as `MAX_TOKEN_SIZE` bounds their
+size, or allow an enforcement point to deny a token whose nesting exceeds
+an implementation-defined limit.
+
 ## Revocation {#revocation}
 
 Section 9.8 of {{AAT}} defines no revocation mechanism. The model includes,
@@ -314,9 +344,35 @@ model does.
 Disagreements are grouped by step and split into dangerous ones (the model
 denies, the implementation permits) and spurious denials. Two calibration
 runs check the harness itself: an adapter that answers with the model agrees
-on 529 of 529 inputs, and a verifier with three deliberately introduced
+on every input (329 of 329 in the default run), and a verifier with three deliberately introduced
 faults (range bound inclusivity, a missing `par_hash` check, a missing chain
 `aud` check) is reported for all three faults with no false alarms.
+
+## Results against an independent verifier
+
+The harness was run against the AAT-02 verifier of Mission-Bound
+Authorization {{RA}}, a TypeScript implementation written independently of
+the model, with its four verifier files unchanged except for import suffixes
+and two parameter properties written as fields. The implementation received
+each vector without its expected verdict, title, description or mutation.
+The records {{RUNS}} give the commits, suite hashes, seeds and tool
+versions.
+
+* In a first run (three seeds, 1 000 generated chains each, plus the 229
+  published vectors in each run), the two implementations agreed on all
+  3 229 distinct inputs, with no protocol error and no answer produced by an
+  exception.
+* A second run (three further seeds) added eight mutations: inadmissible
+  numbers in arguments, in `hta` and in a constraint; an admissible number
+  above 2^53; duplicate member names nested inside an argument; a root
+  `iss` that is not a URI; a trust anchor JWK with curve X25519 and the `x`
+  of the signing Ed25519 key; and an unrecognised claim nested 5 000 deep.
+  There was no dangerous disagreement. There were 42 spurious denials, all on
+  the last mutation, all at step 2c; they are discussed in
+  {{nesting}}.
+
+Agreement raises confidence in both implementations; it does not prove
+either correct, and it covers only the inputs generated.
 
 # Considerations for Test Harnesses {#harness}
 

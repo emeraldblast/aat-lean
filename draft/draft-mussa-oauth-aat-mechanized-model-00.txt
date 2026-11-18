@@ -3,9 +3,9 @@
 
 
 Web Authorization Protocol                                      Y. Mussa
-Internet-Draft                                          12 November 2026
+Internet-Draft                                          18 November 2026
 Intended status: Informational                                          
-Expires: 16 May 2027
+Expires: 22 May 2027
 
 
    A Mechanized Model of the Attenuating Agent Token Chain Verifier:
@@ -26,8 +26,9 @@ Abstract
    the verification algorithm are implied by the others.  It describes
    the model's agreement with the published test vectors and a
    differential testing method that uses the model as an oracle for
-   other implementations.  Findings relevant to the next revision of AAT
-   are collected in one section.
+   other implementations, with its results against an independent
+   verifier.  Findings relevant to the next revision of AAT are
+   collected in one section.
 
 Status of This Memo
 
@@ -44,19 +45,23 @@ Status of This Memo
    time.  It is inappropriate to use Internet-Drafts as reference
    material or to cite them other than as "work in progress."
 
-   This Internet-Draft will expire on 16 May 2027.
+   This Internet-Draft will expire on 22 May 2027.
+
+
+
+
+
+
+
+Mussa                      Expires 22 May 2027                  [Page 1]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
 
 Copyright Notice
 
    Copyright (c) 2026 IETF Trust and the persons identified as the
    document authors.  All rights reserved.
-
-
-
-Mussa                      Expires 16 May 2027                  [Page 1]
-
-Internet-Draft         AAT Mechanized Model Report         November 2026
-
 
    This document is subject to BCP 78 and the IETF Trust's Legal
    Provisions Relating to IETF Documents (https://trustee.ietf.org/
@@ -72,21 +77,23 @@ Table of Contents
    1.  Introduction  . . . . . . . . . . . . . . . . . . . . . . . .   2
    2.  The Model . . . . . . . . . . . . . . . . . . . . . . . . . .   3
      2.1.  Scope . . . . . . . . . . . . . . . . . . . . . . . . . .   3
-     2.2.  Assumptions . . . . . . . . . . . . . . . . . . . . . . .   3
-   3.  Mechanized Properties . . . . . . . . . . . . . . . . . . . .   4
+     2.2.  Assumptions . . . . . . . . . . . . . . . . . . . . . . .   4
+   3.  Mechanized Properties . . . . . . . . . . . . . . . . . . . .   5
    4.  Findings for the Specification  . . . . . . . . . . . . . . .   7
      4.1.  The attenuation rules are sound . . . . . . . . . . . . .   7
-     4.2.  The attenuation rules are incomplete, as intended . . . .   7
-     4.3.  Redundant steps . . . . . . . . . . . . . . . . . . . . .   7
-     4.4.  Revocation  . . . . . . . . . . . . . . . . . . . . . . .   8
+     4.2.  The attenuation rules are incomplete, as intended . . . .   8
+     4.3.  Redundant steps . . . . . . . . . . . . . . . . . . . . .   8
+     4.4.  No bound on JSON nesting depth  . . . . . . . . . . . . .   9
+     4.5.  Revocation  . . . . . . . . . . . . . . . . . . . . . . .   9
    5.  Agreement with the Test Vectors . . . . . . . . . . . . . . .   9
-   6.  Differential Conformance Testing  . . . . . . . . . . . . . .   9
-   7.  Considerations for Test Harnesses . . . . . . . . . . . . . .   9
-   8.  Security Considerations . . . . . . . . . . . . . . . . . . .  10
-   9.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .  11
-   10. Informative References  . . . . . . . . . . . . . . . . . . .  11
-   Acknowledgments . . . . . . . . . . . . . . . . . . . . . . . . .  12
-   Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .  12
+   6.  Differential Conformance Testing  . . . . . . . . . . . . . .  10
+     6.1.  Results against an independent verifier . . . . . . . . .  10
+   7.  Considerations for Test Harnesses . . . . . . . . . . . . . .  11
+   8.  Security Considerations . . . . . . . . . . . . . . . . . . .  12
+   9.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .  12
+   10. Informative References  . . . . . . . . . . . . . . . . . . .  12
+   Acknowledgments . . . . . . . . . . . . . . . . . . . . . . . . .  13
+   Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .  13
 
 1.  Introduction
 
@@ -99,20 +106,20 @@ Table of Contents
    TypeScript verifier that agrees with the author's 229 test vectors
    [VECTORS], a symbolic model in ProVerif of AAT-01 for chains of up to
    four tokens, and a list of ambiguities in the specification.  This
+
+
+
+Mussa                      Expires 22 May 2027                  [Page 2]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
    document complements that report.  It addresses a level the symbolic
    model does not cover: the meaning of argument constraints and the
    attenuation rules over them, for chains of any length, against the
    text of -02.
 
    The contribution is an executable model [MODEL] in Lean 4 [LEAN]:
-
-
-
-
-Mussa                      Expires 16 May 2027                  [Page 2]
-
-Internet-Draft         AAT Mechanized Model Report         November 2026
-
 
    *  a verification function that follows the steps of Section 8 of
       [AAT] and takes its inputs (parameters, trust anchors, chain,
@@ -148,6 +155,21 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
    any) and the key rules 4p1-4p4; - step 5; - the leaf and invocation
    checks 6a-6c; - proof of possession, steps 7a-7i.
 
+
+
+
+
+
+
+
+
+
+
+Mussa                      Expires 22 May 2027                  [Page 3]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
    Number admissibility (Section 3.4, used in 3n, 4o, 6b and 7f) is
    computed in the model: correctly rounded IEEE 754 binary64, then the
    shortest form that ECMAScript Number::toString, and therefore JCS,
@@ -162,13 +184,6 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
    1.  Signatures cannot be forged; SHA-256 is collision-resistant, and
        the JWK thumbprint URI [RFC7638] [RFC9278] is an injective
        function of the key.
-
-
-
-Mussa                      Expires 16 May 2027                  [Page 3]
-
-Internet-Draft         AAT Mechanized Model Report         November 2026
-
 
    2.  The key of a trust anchor belongs to its stated issuer.
 
@@ -191,8 +206,25 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
        OKP, crv is Ed25519, x is 43 base64url characters, and d is
        absent.
 
-   7.  For the revocation extension only (Section 4.4): the revocation
+   7.  For the revocation extension only (Section 4.5): the revocation
        snapshot is fresh.
+
+
+
+
+
+
+
+
+
+
+
+
+
+Mussa                      Expires 22 May 2027                  [Page 4]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
 
    The model checks token and chain sizes and every JWS Protected Header
    (steps 2a, 2b, 3a, 4a, 7a) and reads each signed payload as written:
@@ -218,14 +250,6 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
    |              |accepts a chain,    |                              |
    |              |every call permitted|                              |
    |              |by a link is        |                              |
-
-
-
-Mussa                      Expires 16 May 2027                  [Page 4]
-
-Internet-Draft         AAT Mechanized Model Report         November 2026
-
-
    |              |permitted by its    |                              |
    |              |parent (C(child) is |                              |
    |              |a subset of         |                              |
@@ -250,6 +274,14 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
    |              |every link of the   |                              |
    |              |chain, not only by  |                              |
    |              |the leaf            |                              |
+
+
+
+Mussa                      Expires 22 May 2027                  [Page 5]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
    +--------------+--------------------+------------------------------+
    |T3            |The root is signed  |t3_root                       |
    |              |by a trust anchor's |                              |
@@ -274,14 +306,6 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
    |              |equals its position;|                              |
    |              |chain length is at  |                              |
    |              |most                |                              |
-
-
-
-Mussa                      Expires 16 May 2027                  [Page 5]
-
-Internet-Draft         AAT Mechanized Model Report         November 2026
-
-
    |              |MAX_DELEGATION_DEPTH|                              |
    |              |+ 1 (I2)            |                              |
    +--------------+--------------------+------------------------------+
@@ -306,6 +330,14 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
    |              |chain names this    |                              |
    |              |enforcement point   |                              |
    |              |(6c)                |                              |
+
+
+
+Mussa                      Expires 22 May 2027                  [Page 6]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
    +--------------+--------------------+------------------------------+
    |T9            |The PoP is signed by|t9_pop, t9_replay             |
    |              |the leaf holder's   |                              |
@@ -325,18 +357,6 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
    +--------------+--------------------+------------------------------+
 
                       Table 1: Mechanized properties
-
-
-
-
-
-
-
-
-Mussa                      Expires 16 May 2027                  [Page 6]
-
-Internet-Draft         AAT Mechanized Model Report         November 2026
-
 
    T1 is stated about the accepting verifier and holds for any values of
    its other inputs.  T2 follows from T1 only because the model's notion
@@ -361,6 +381,19 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
    Section 4.1 is non-normative, the result is soundness with respect to
    that model of C(T), not a proof of the normative invariant I4.
 
+
+
+
+
+
+
+
+
+Mussa                      Expires 22 May 2027                  [Page 7]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
 4.2.  The attenuation rules are incomplete, as intended
 
    Two kernel-checked witnesses show semantically narrower links that
@@ -383,16 +416,6 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
    step 4d, the value check of step 3c (del_depth of the root is 0) does
    not change any verdict either.  That check and step 5 are therefore
    mutually redundant: either one, together with 4d, suffices.
-
-
-
-
-
-
-Mussa                      Expires 16 May 2027                  [Page 7]
-
-Internet-Draft         AAT Mechanized Model Report         November 2026
-
 
    Step 3c also checks that the root's del_depth is an integer, and that
    check is not redundant.  In the model it belongs to claim parsing
@@ -420,6 +443,13 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
    confirms it: dropping 4b5 moves J.24.7 to 4c and J.24.8 to 4q, with
    the same verdicts.
 
+
+
+Mussa                      Expires 22 May 2027                  [Page 8]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
    A consequence for conformance testing is that no test vector can
    detect an implementation that omits exactly one of these checks (for
    3c, its value check; for 4b5, its iss/par_hash check): such an
@@ -431,7 +461,26 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
    as covering them, and so that an implementation that keeps them as
    defense in depth knows they cannot be tested in isolation.
 
-4.4.  Revocation
+4.4.  No bound on JSON nesting depth
+
+   AAT-02 bounds the size of a token (MAX_TOKEN_SIZE) and of a chain,
+   and requires unrecognised claims to be ignored, but sets no bound on
+   JSON nesting depth.  A token whose payload carries an unrecognised
+   claim nested 5 000 deep fits well within 65 536 bytes.  Read
+   literally, Section 8 permits a chain with such a root, and the model
+   permits it.  The independent verifier of Section 6 denies it, because
+   its JSON reader refuses nesting deeper than 512 levels as a guard
+   against stack exhaustion.  The denial is fail-closed and a reasonable
+   resource limit, but it is not in the specification, so two verifiers
+   that each follow Section 8 return different verdicts on the same
+   input, and no published vector tests the case.
+
+   Suggestion for the next revision: either define a maximum nesting
+   depth for token headers, payloads and call arguments, as
+   MAX_TOKEN_SIZE bounds their size, or allow an enforcement point to
+   deny a token whose nesting exceeds an implementation-defined limit.
+
+4.5.  Revocation
 
    Section 9.8 of [AAT] defines no revocation mechanism.  The model
    includes, as a separate extension outside the verification function,
@@ -440,16 +489,6 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
    AAT-02 offers no way to revoke an intermediate link alone; revocation
    is per chain, through its root.
 
-
-
-
-
-
-Mussa                      Expires 16 May 2027                  [Page 8]
-
-Internet-Draft         AAT Mechanized Model Report         November 2026
-
-
 5.  Agreement with the Test Vectors
 
    The published suite [VECTORS] (229 vectors: 54 permit, 175 deny) is
@@ -457,6 +496,15 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
    Ed25519, and evaluated by the same function the theorems are about.
    A vector is in scope when its expected verdict is decided by modeled
    steps.
+
+
+
+
+
+Mussa                      Expires 22 May 2027                  [Page 9]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
 
    *  All 229 vectors are in scope, and the model agrees on all 229,
       including all 54 permit vectors.  PoP replay state after the call
@@ -488,23 +536,54 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
    Disagreements are grouped by step and split into dangerous ones (the
    model denies, the implementation permits) and spurious denials.  Two
    calibration runs check the harness itself: an adapter that answers
-   with the model agrees on 529 of 529 inputs, and a verifier with three
-   deliberately introduced faults (range bound inclusivity, a missing
-   par_hash check, a missing chain aud check) is reported for all three
-   faults with no false alarms.
+   with the model agrees on every input (329 of 329 in the default run),
+   and a verifier with three deliberately introduced faults (range bound
+   inclusivity, a missing par_hash check, a missing chain aud check) is
+   reported for all three faults with no false alarms.
+
+6.1.  Results against an independent verifier
+
+   The harness was run against the AAT-02 verifier of Mission-Bound
+   Authorization [RA], a TypeScript implementation written independently
+   of the model, with its four verifier files unchanged except for
+   import suffixes and two parameter properties written as fields.  The
+   implementation received each vector without its expected verdict,
+   title, description or mutation.  The records [RUNS] give the commits,
+   suite hashes, seeds and tool versions.
+
+
+
+
+
+
+
+Mussa                      Expires 22 May 2027                 [Page 10]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
+   *  In a first run (three seeds, 1 000 generated chains each, plus the
+      229 published vectors in each run), the two implementations agreed
+      on all 3 229 distinct inputs, with no protocol error and no answer
+      produced by an exception.
+
+   *  A second run (three further seeds) added eight mutations:
+      inadmissible numbers in arguments, in hta and in a constraint; an
+      admissible number above 2^53; duplicate member names nested inside
+      an argument; a root iss that is not a URI; a trust anchor JWK with
+      curve X25519 and the x of the signing Ed25519 key; and an
+      unrecognised claim nested 5 000 deep.  There was no dangerous
+      disagreement.  There were 42 spurious denials, all on the last
+      mutation, all at step 2c; they are discussed in Section 4.4.
+
+   Agreement raises confidence in both implementations; it does not
+   prove either correct, and it covers only the inputs generated.
 
 7.  Considerations for Test Harnesses
 
    External reviews of the harness in [MODEL] found the defects below,
    all corrected.  They are recorded here because they apply to any
    harness that consumes the published vector format.
-
-
-
-Mussa                      Expires 16 May 2027                  [Page 9]
-
-Internet-Draft         AAT Mechanized Model Report         November 2026
-
 
    1.  Each vector carries a token in several representations (decoded
        payload, signing input, signature, compact serialization).  A
@@ -530,6 +609,15 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
    6.  The implementation should not receive the expected verdict or the
        vector's description, which name the failing step.
 
+
+
+
+
+Mussa                      Expires 22 May 2027                 [Page 11]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
    7.  A signature should be attributed only to keys whose type and
        curve match the algorithm: an Ed25519 signature checked against
        the x of an X25519 JWK must not count as verification under that
@@ -553,14 +641,6 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
    parser itself, cryptographic primitives, and the correspondence
    between verified bytes and executed actions are outside the model and
    remain the implementer's responsibility.
-
-
-
-
-Mussa                      Expires 16 May 2027                 [Page 10]
-
-Internet-Draft         AAT Mechanized Model Report         November 2026
-
 
 9.  IANA Considerations
 
@@ -586,9 +666,23 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
               DOI 10.1007/978-3-030-79876-5_37, 2021,
               <https://doi.org/10.1007/978-3-030-79876-5_37>.
 
+
+
+
+Mussa                      Expires 22 May 2027                 [Page 12]
+
+Internet-Draft         AAT Mechanized Model Report         November 2026
+
+
    [MODEL]    Mussa, Y., "aat-lean: an executable Lean 4 model of the
               AAT-02 chain verifier", n.d.,
               <https://github.com/emeraldblast/aat-lean>.
+
+   [RA]       mcguinness, "Mission-Bound Authorization: AAT-02 verifier
+              (verifyAatPresentation)", n.d.,
+              <https://github.com/mcguinness/mission-bound-
+              authorization/tree/
+              e456a5fbb3c391a2f9b5577cde9faab9d63bcd5a>.
 
    [RFC7515]  Jones, M., Bradley, J., and N. Sakimura, "JSON Web
               Signature (JWS)", RFC 7515, DOI 10.17487/RFC7515, May
@@ -607,16 +701,14 @@ Internet-Draft         AAT Mechanized Model Report         November 2026
               DOI 10.17487/RFC9278, August 2022,
               <https://www.rfc-editor.org/rfc/rfc9278>.
 
+   [RUNS]     Mussa, Y., "aat-lean: records of differential runs
+              (conformance/runs/)", n.d.,
+              <https://github.com/emeraldblast/aat-
+              lean/tree/main/conformance/runs>.
+
    [VECTORS]  tenuo-ai, "AAT-02 JWS test vectors (tests/vectors/aat-jws-
               vectors.json)", n.d., <https://github.com/tenuo-ai/tenuo/
               tree/99fb00994d8d66b213cd12967d6e8eef45025672>.
-
-
-
-Mussa                      Expires 16 May 2027                 [Page 11]
-
-Internet-Draft         AAT Mechanized Model Report         November 2026
-
 
 Acknowledgments
 
@@ -633,40 +725,4 @@ Author's Address
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Mussa                      Expires 16 May 2027                 [Page 12]
+Mussa                      Expires 22 May 2027                 [Page 13]
